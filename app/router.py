@@ -1,0 +1,367 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import HTMLResponse
+
+from app.acoustic_model import BaseAcousticEngine
+from app.aligner_gop import ForcedAlignerGOP
+from app.audio_utils import load_and_normalize_audio, split_at_breath_pauses
+from app.config import Settings
+from app.g2p import G2PService
+from app.prosody import compute_pronunciation_metrics
+from app.schemas import FreeSpeechAssessResponse, PronunciationAssessResponse
+from app.stt_engines import BaseSTTEngine
+
+router = APIRouter()
+_STATIC_HTML_PATH = Path(__file__).resolve().parent / "static" / "index.html"
+
+
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/tester", response_class=HTMLResponse, summary="Browser HTML Testing Client")
+async def serve_html_tester() -> HTMLResponse:
+    """Serve the built-in browser HTML testing client for Mode A & Mode B."""
+    return HTMLResponse(content=_STATIC_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@router.get("/api/v1/pronunciation/phonemize", summary="Preview Expected Word-by-Word IPA for Shadowing")
+async def preview_phonemize(
+    request: Request,
+    text: str,
+    language: str = "en",
+) -> dict[str, object]:
+    """Return word-by-word expected IPA transcription using espeak-ng for the Shadowing UI."""
+    g2p: G2PService | None = getattr(request.app.state, "g2p", None)
+    if g2p is None:
+        raise HTTPException(status_code=503, detail="G2P service not initialized.")
+    targets = g2p.phonemize_text(reference_text=text, language=language)
+    return {
+        "text": text,
+        "language": language,
+        "words": [
+            {
+                "word": t.word,
+                "expected_ipa": t.sanitized_ipa,
+                "phonemes": t.phonemes,
+            }
+            for t in targets
+        ],
+    }
+
+
+@router.get("/health")
+async def health_check(request: Request) -> dict[str, object]:
+    """Liveness and active Mode A / Mode B profile status."""
+    settings: Settings = request.app.state.settings
+    acoustic_engine: BaseAcousticEngine | None = getattr(
+        request.app.state, "acoustic_engine", None
+    )
+    stt_engine: BaseSTTEngine | None = getattr(request.app.state, "stt_engine", None)
+    g2p: G2PService | None = getattr(request.app.state, "g2p", None)
+    return {
+        "status": "ok",
+        "mode_a": {
+            "device": settings.mode_a_device,
+            "engine": settings.mode_a_engine,
+            "ready": stt_engine is not None,
+            "provider": stt_engine.engine_name if stt_engine else None,
+        },
+        "mode_b": {
+            "device": settings.mode_b_device,
+            "model": settings.mode_b_model,
+            "ready": acoustic_engine is not None and g2p is not None,
+            "provider": acoustic_engine.active_provider if acoustic_engine else None,
+            "vocab_size": len(g2p.vocab) if g2p else 0,
+        },
+    }
+
+
+async def _score_samples_against_text(
+    settings: Settings,
+    acoustic_engine: BaseAcousticEngine,
+    g2p: G2PService,
+    aligner: ForcedAlignerGOP,
+    samples: np.ndarray,
+    leading_trimmed_ms: int,
+    reference_text: str,
+    language: str,
+) -> PronunciationAssessResponse:
+    word_targets = g2p.phonemize_text(reference_text=reference_text, language=language)
+    if not word_targets:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract valid IPA phoneme targets from reference_text.",
+        )
+
+    chunks = split_at_breath_pauses(
+        samples=samples,
+        sample_rate=settings.sample_rate,
+        max_chunk_seconds=settings.mode_b_max_chunk_seconds,
+    )
+
+    logits_list: list[np.ndarray] = []
+    hidden_list: list[np.ndarray] = []
+
+    for chunk in chunks:
+        forward_out = await acoustic_engine.infer_single_pass(chunk.samples)
+        logits_list.append(forward_out.logits)
+        hidden_list.append(forward_out.hidden_states)
+
+    combined_logits = (
+        np.concatenate(logits_list, axis=0) if len(logits_list) > 1 else logits_list[0]
+    )
+    combined_hidden = (
+        np.concatenate(hidden_list, axis=0) if len(hidden_list) > 1 else hidden_list[0]
+    )
+
+    words_assessed = aligner.assess_words(
+        logits=combined_logits,
+        word_targets=word_targets,
+        chunk_offset_ms=leading_trimmed_ms,
+    )
+
+    total_duration_ms = int(round(len(samples) * 1000.0 / settings.sample_rate))
+    overall_score, metrics = compute_pronunciation_metrics(
+        words=words_assessed,
+        hidden_states=combined_hidden,
+        total_duration_ms=total_duration_ms,
+        waveform=samples,
+        sample_rate=settings.sample_rate,
+    )
+
+    return PronunciationAssessResponse(
+        overall_score=overall_score,
+        metrics=metrics,
+        words=words_assessed,
+    )
+
+
+async def _handle_pronunciation_assess(
+    request: Request,
+    audio: UploadFile,
+    reference_text: str,
+    language: str,
+    sentence_id: str | None,
+) -> PronunciationAssessResponse:
+    settings: Settings = request.app.state.settings
+    acoustic_engine: BaseAcousticEngine | None = getattr(
+        request.app.state, "acoustic_engine", None
+    )
+    g2p: G2PService | None = getattr(request.app.state, "g2p", None)
+    aligner: ForcedAlignerGOP | None = getattr(request.app.state, "aligner", None)
+
+    if acoustic_engine is None or g2p is None or aligner is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Mode B Pronunciation Engine is not initialized.",
+        )
+
+    if not reference_text or not reference_text.strip():
+        raise HTTPException(status_code=422, detail="reference_text must not be empty.")
+
+    audio_bytes = await audio.read()
+    try:
+        samples, leading_trimmed_ms = load_and_normalize_audio(
+            audio_bytes=audio_bytes,
+            target_sr=settings.sample_rate,
+            trim_silence=settings.mode_b_trim_silence,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if samples.size < int(0.08 * settings.sample_rate):
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded audio clip is too short (< 80ms of active speech).",
+        )
+
+    return await _score_samples_against_text(
+        settings=settings,
+        acoustic_engine=acoustic_engine,
+        g2p=g2p,
+        aligner=aligner,
+        samples=samples,
+        leading_trimmed_ms=leading_trimmed_ms,
+        reference_text=reference_text,
+        language=language,
+    )
+
+
+@router.post(
+    "/api/v1/pronunciation/assess",
+    response_model=PronunciationAssessResponse,
+    summary="Mode B: On-Demand Pronunciation Assessment",
+)
+async def assess_pronunciation_v1(
+    request: Request,
+    audio: UploadFile = File(..., description="16kHz, 16-bit, mono WAV audio file"),
+    reference_text: str = Form(..., description="Expected text spoken by the user"),
+    language: str = Form(default="en", description="ISO language code (e.g., en, es, fr, de, hi)"),
+    sentence_id: str | None = Form(default=None, description="Optional lesson sentence cache ID"),
+) -> PronunciationAssessResponse:
+    """Unified Mode B REST endpoint for word- and phoneme-level pronunciation assessment."""
+    return await _handle_pronunciation_assess(
+        request=request,
+        audio=audio,
+        reference_text=reference_text,
+        language=language,
+        sentence_id=sentence_id,
+    )
+
+
+@router.post(
+    "/assess",
+    response_model=PronunciationAssessResponse,
+    summary="Mode B Alias: Single-Pass Pronunciation Assessment",
+)
+async def assess_pronunciation_short(
+    request: Request,
+    audio: UploadFile = File(..., description="16kHz, 16-bit, mono WAV audio file"),
+    reference_text: str = Form(..., description="Expected text spoken by the user"),
+    language: str = Form(default="en", description="ISO language code"),
+    sentence_id: str | None = Form(default=None, description="Optional lesson sentence cache ID"),
+) -> PronunciationAssessResponse:
+    """Short alias for POST /api/v1/pronunciation/assess."""
+    return await _handle_pronunciation_assess(
+        request=request,
+        audio=audio,
+        reference_text=reference_text,
+        language=language,
+        sentence_id=sentence_id,
+    )
+
+
+@router.post(
+    "/api/v1/pronunciation/free-assess",
+    response_model=FreeSpeechAssessResponse,
+    summary="Mode A + Mode B: 10-15s Unscripted Free-Speech STT + Pronunciation Auto-Correction",
+)
+async def assess_free_speech(
+    request: Request,
+    audio: UploadFile = File(..., description="16kHz mono WAV (10-15s free speech)"),
+    language: str = Form(default="en", description="Explicit ISO language code"),
+) -> FreeSpeechAssessResponse:
+    """
+    Transcribe unscripted 10-15s audio using Mode A low-latency STT to infer intended text,
+    then score the exact same audio through Mode B (Wav2Vec2 + forced_align + panphon)
+    to highlight mispronounced words automatically.
+    """
+    settings: Settings = request.app.state.settings
+    stt_engine: BaseSTTEngine | None = getattr(request.app.state, "stt_engine", None)
+    acoustic_engine: BaseAcousticEngine | None = getattr(
+        request.app.state, "acoustic_engine", None
+    )
+    g2p: G2PService | None = getattr(request.app.state, "g2p", None)
+    aligner: ForcedAlignerGOP | None = getattr(request.app.state, "aligner", None)
+
+    if stt_engine is None or acoustic_engine is None or g2p is None or aligner is None:
+        raise HTTPException(status_code=503, detail="Mode A or Mode B engine not initialized.")
+
+    audio_bytes = await audio.read()
+    try:
+        samples, leading_trimmed_ms = load_and_normalize_audio(
+            audio_bytes=audio_bytes,
+            target_sr=settings.sample_rate,
+            trim_silence=settings.mode_b_trim_silence,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if samples.size < int(0.15 * settings.sample_rate):
+        raise HTTPException(status_code=400, detail="Audio clip is too short (< 150ms).")
+
+    detected_text, stt_conf = await stt_engine.transcribe_async(samples, language=language)
+    if not detected_text:
+        raise HTTPException(
+            status_code=422,
+            detail="No clear speech detected in the uploaded audio clip.",
+        )
+
+    assessed = await _score_samples_against_text(
+        settings=settings,
+        acoustic_engine=acoustic_engine,
+        g2p=g2p,
+        aligner=aligner,
+        samples=samples,
+        leading_trimmed_ms=leading_trimmed_ms,
+        reference_text=detected_text,
+        language=language,
+    )
+
+    return FreeSpeechAssessResponse(
+        detected_transcript=detected_text,
+        stt_confidence=stt_conf,
+        overall_score=assessed.overall_score,
+        metrics=assessed.metrics,
+        words=assessed.words,
+    )
+
+
+@router.websocket("/ws/transcribe")
+async def websocket_transcribe(websocket: WebSocket, lang: str = "en") -> None:
+    """
+    Mode A: WebSocket `/ws/transcribe?lang={code}`
+    - Client -> Server: Binary frames (`16kHz, 16-bit, mono PCM` in 100ms-200ms chunks)
+                        or JSON control message `{"type": "flush"}` / `{"type": "reset"}`.
+    - Server -> Client: JSON `{"type": "interim"|"final", "transcript": "...", "language": "en", "confidence": 0.96}`
+    """
+    await websocket.accept()
+    if not lang or lang.lower() == "auto":
+        await websocket.send_json(
+            {
+                "error": "Explicit `lang` query parameter is required (never use language='auto')."
+            }
+        )
+        await websocket.close(code=1008)
+        return
+
+    stt_engine: BaseSTTEngine | None = getattr(websocket.app.state, "stt_engine", None)
+    if stt_engine is None:
+        await websocket.send_json({"error": "Mode A STT engine is not initialized."})
+        await websocket.close(code=1011)
+        return
+
+    session = stt_engine.create_session(language=lang)
+    try:
+        while True:
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            if "bytes" in msg and msg["bytes"] is not None:
+                events = await session.ingest_pcm16_bytes(msg["bytes"])
+                for ev in events:
+                    await websocket.send_json(ev.model_dump())
+            elif "text" in msg and msg["text"] is not None:
+                try:
+                    payload = json.loads(msg["text"])
+                except ValueError:
+                    payload = {"type": msg["text"].strip().lower()}
+
+                cmd = payload.get("type")
+                if cmd == "flush":
+                    final_ev = await session.flush()
+                    if final_ev is not None:
+                        await websocket.send_json(final_ev.model_dump())
+                elif cmd == "reset":
+                    session.reset()
+                elif cmd == "close":
+                    final_ev = await session.flush()
+                    if final_ev is not None:
+                        await websocket.send_json(final_ev.model_dump())
+                    await websocket.close(code=1000)
+                    break
+    except WebSocketDisconnect:
+        pass

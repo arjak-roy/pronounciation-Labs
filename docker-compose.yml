@@ -1,0 +1,42 @@
+services:
+  pronunciation-engine-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_DEVICE: cpu
+    environment:
+      MODE_A_DEVICE: cpu
+      MODE_A_ENGINE: sherpa
+      MODE_B_DEVICE: cpu
+      MODE_B_MODEL: facebook/wav2vec2-xlsr-53-espeak-cv-ft
+      MODE_B_INTRA_OP_THREADS: 2
+      MODE_B_PROCESS_WORKERS: 2
+    volumes:
+      - ./models:/app/models
+    ports:
+      - "8000:8000"
+
+  pronunciation-engine-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_DEVICE: gpu
+    environment:
+      MODE_A_DEVICE: gpu
+      MODE_A_ENGINE: whisper
+      MODE_B_DEVICE: gpu
+      MODE_B_MODEL: facebook/wav2vec2-xlsr-53-espeak-cv-ft
+    volumes:
+      - ./models:/app/models
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

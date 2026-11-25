@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-pronunciation-engine"
+version = "0.1.0"
+description = "100% Open-Source Self-Hosted Voice & Pronunciation Engine (Mode A Live STT & Mode B Acoustic Pronunciation Assessment)"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.3.0",
+  "python-multipart>=0.0.9",
+  "numpy>=1.26.0",
+  "soundfile>=0.12.1",
+  "scipy>=1.13.0",
+  "phonemizer>=3.2.1",
+  "espeakng-loader>=0.2.4",
+  "panphon>=0.20.0",
+  "onnxruntime>=1.18.0",
+  "torch>=2.4.0",
+  "torchaudio>=2.4.0",
+  "transformers>=4.41.0",
+  "onnx>=1.16.0",
+]
+
+[project.optional-dependencies]
+stt = [
+  "sherpa-onnx>=2.0.0",
+  "vosk>=0.3.45",
+  "faster-whisper>=1.0.0",
+]
+gpu = [
+  "onnxruntime-gpu>=1.18.0",
+  "onnxconverter-common>=1.14.0",
+]
+dev = [
+  "pytest>=8.2.0",
+  "pytest-asyncio>=0.23.0",
+  "httpx>=0.27.0",
+  "ruff>=0.5.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*", "scripts*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]

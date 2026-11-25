@@ -1,0 +1,39 @@
+services:
+  voice-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_DEVICE: cpu
+    restart: unless-stopped
+    environment:
+      MODE_A_ENABLED: "false"
+      MODE_B_DEVICE: cpu
+      MODE_B_MODEL: facebook/wav2vec2-lv-60-espeak-cv-ft
+      # MODE_B_PROCESS_WORKERS=0 shares a single INT8 ONNX session in memory (~600MB RAM saved)
+      MODE_B_PROCESS_WORKERS: 0
+      MODE_B_INTRA_OP_THREADS: 2
+    volumes:
+      - ./models:/app/models
+    ports:
+      - "8000:8000"
+
+  # Automatic HTTPS Reverse Proxy (Required by Chrome/Safari for Microphone getUserMedia on public AWS IPs)
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - voice-engine
+
+volumes:
+  caddy_data:
+  caddy_config:

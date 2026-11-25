@@ -1,0 +1,2481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <title>Voice & Pronunciation Quest — Interactive Shadowing Coach</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --surface: #111827;
+      --surface-2: #1e293b;
+      --surface-3: #0f172a;
+      --border: rgba(148, 163, 184, 0.18);
+      --border-strong: rgba(56, 189, 248, 0.4);
+      --text: #f8fafc;
+      --text-secondary: #cbd5e1;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --indigo: #6366f1;
+      --purple: #a855f7;
+      --green: #22c55e;
+      --green-soft: rgba(34, 197, 94, 0.15);
+      --amber: #f59e0b;
+      --amber-soft: rgba(245, 158, 11, 0.15);
+      --red: #ef4444;
+      --red-soft: rgba(239, 68, 68, 0.16);
+      --gold: #facc15;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #172554 0%, var(--bg) 60%);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: clamp(10px, 2.5vw, 24px);
+      overflow-x: hidden;
+    }
+
+    #confettiCanvas {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    .app-shell {
+      max-width: 1140px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* --- 1. TOP NAVIGATION & GAMIFIED HUD --- */
+    .top-hud {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 12px 18px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent), var(--indigo));
+      display: grid;
+      place-items: center;
+      font-size: 1.25rem;
+      flex-shrink: 0;
+      box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
+    }
+
+    .brand-title {
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      font-weight: 800;
+      margin: 0;
+      letter-spacing: -0.02em;
+    }
+
+    .engine-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+    }
+    .status-dot.ready {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
+
+    .hud-widgets {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .hud-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .hud-chip.streak {
+      border-color: rgba(245, 158, 11, 0.45);
+      color: #fde68a;
+    }
+
+    .xp-box {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 150px;
+    }
+    .xp-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+    }
+    .xp-track {
+      height: 7px;
+      background: var(--surface-3);
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .xp-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--purple));
+      transition: width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    /* --- 2. SWIPEABLE QUEST LEVEL SELECTOR --- */
+    .quest-strip-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .strip-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 4px;
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .quest-carousel {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(175px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: thin;
+    }
+    .quest-card {
+      scroll-snap-align: start;
+      background: rgba(17, 24, 39, 0.85);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 11px 14px;
+      cursor: pointer;
+      transition: all 0.16s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 5px;
+      text-align: left;
+    }
+    .quest-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+    .quest-card.active {
+      background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent), 0 8px 20px rgba(56, 189, 248, 0.18);
+    }
+    .quest-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.7rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .quest-card-phrase {
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.3;
+    }
+    .quest-card-meta {
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    /* --- 3. INTEGRATED PHRASE & ACCENT BAR (RIGHT ABOVE STAGE) --- */
+    .phrase-toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+      align-items: center;
+    }
+    @media (max-width: 720px) {
+      .phrase-toolbar {
+        grid-template-columns: 1fr 1fr;
+      }
+      .phrase-input-wrap {
+        grid-column: 1 / -1;
+      }
+    }
+    .phrase-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 4px 10px;
+    }
+    .phrase-input-wrap:focus-within {
+      border-color: var(--accent);
+    }
+    .phrase-input-wrap span {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .phrase-input-wrap input {
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 6px 4px;
+      outline: none;
+    }
+    .toolbar-select {
+      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface-3);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* --- 4. MAIN INTERACTIVE SHADOWING WORKSPACE --- */
+    .workspace {
+      background: linear-gradient(180deg, #131c31 0%, #0b1120 100%);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: clamp(14px, 2.5vw, 24px);
+      position: relative;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+
+    /* Step-by-Step User Guide Stepper */
+    .step-guide {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 14px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .steps-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .step-pill {
+      font-size: 0.76rem;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+    }
+    .step-pill.current {
+      background: rgba(56, 189, 248, 0.14);
+      color: var(--accent);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+
+    .rank-pill {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: rgba(250, 204, 21, 0.14);
+      border: 1px solid rgba(250, 204, 21, 0.45);
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-weight: 800;
+      font-size: 0.85rem;
+      animation: popIn 0.3s ease;
+    }
+    @keyframes popIn {
+      0% { transform: scale(0.8); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Split Grid: Avatar Coach + Shadowing Stage */
+    .stage-grid {
+      display: grid;
+      grid-template-columns: 265px 1fr;
+      gap: 20px;
+      align-items: stretch;
+    }
+    @media (max-width: 860px) {
+      .stage-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Left: Avatar Coach Card */
+    .avatar-card {
+      background: radial-gradient(circle at 50% 35%, #1e293b 0%, #090d16 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    @media (max-width: 860px) {
+      .avatar-card {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        padding: 12px 16px;
+      }
+    }
+    .avatar-header {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+    }
+    .avatar-picker {
+      padding: 5px 8px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      border-radius: 8px;
+      background: var(--surface-3);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .viseme-tag {
+      font-size: 0.7rem;
+      font-family: "Lucida Sans Unicode", "DejaVu Sans", monospace;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: var(--accent);
+    }
+    .avatar-viewport {
+      width: 220px;
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    @media (max-width: 860px) {
+      .avatar-viewport {
+        width: 150px;
+        height: 150px;
+      }
+    }
+    .coach-bubble {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      text-align: center;
+      line-height: 1.35;
+    }
+    .avatar-quick-btns {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .mini-btn {
+      padding: 4px 9px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      border-radius: 7px;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .mini-btn:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    /* Right: Phrase Stage + Visualizer + Primary Controls */
+    .shadow-column {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .phrase-box {
+      background: rgba(7, 11, 20, 0.55);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: clamp(16px, 2.5vw, 26px) 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+      justify-content: center;
+      gap: 12px;
+      min-height: 145px;
+    }
+
+    .word-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 16px 14px;
+      border-radius: 14px;
+      background: #162033;
+      border: 2px solid #283548;
+      box-shadow: 0 4px 0 #090d16;
+      cursor: pointer;
+      transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+      position: relative;
+      user-select: none;
+      min-width: 84px;
+    }
+    .word-tile:hover {
+      transform: translateY(-3px);
+      border-color: var(--accent);
+    }
+    .word-tile.speaking-now {
+      border-color: var(--accent) !important;
+      background: rgba(56, 189, 248, 0.22) !important;
+      transform: translateY(-5px) scale(1.05);
+      box-shadow: 0 10px 24px rgba(56, 189, 248, 0.32);
+    }
+    .word-tile.selected-tile {
+      outline: 2.5px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .word-tile.correct {
+      background: var(--green-soft);
+      border-color: var(--green);
+    }
+    .word-tile.warning {
+      background: var(--amber-soft);
+      border-color: var(--amber);
+    }
+    .word-tile.mispronounced, .word-tile.omitted {
+      background: var(--red-soft);
+      border-color: var(--red);
+    }
+
+    .tile-badge {
+      position: absolute;
+      top: -10px;
+      right: -6px;
+      font-size: 0.7rem;
+      font-weight: 800;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--surface-3);
+      border: 1.5px solid var(--border);
+    }
+    .word-tile.correct .tile-badge { color: var(--green); border-color: var(--green); }
+    .word-tile.warning .tile-badge { color: var(--amber); border-color: var(--amber); }
+    .word-tile.mispronounced .tile-badge,
+    .word-tile.omitted .tile-badge { color: var(--red); border-color: var(--red); }
+
+    .tile-word {
+      font-size: clamp(1.35rem, 3vw, 1.95rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    .word-tile.correct .tile-word { color: #86efac; }
+    .word-tile.warning .tile-word { color: #fde68a; }
+    .word-tile.mispronounced .tile-word,
+    .word-tile.omitted .tile-word {
+      color: #fca5a5;
+      text-decoration: underline wavy var(--red) 2px;
+      text-underline-offset: 5px;
+    }
+
+    .tile-ipa {
+      margin-top: 4px;
+      font-size: 0.84rem;
+      color: var(--muted);
+      font-family: "Lucida Sans Unicode", "DejaVu Sans", "Segoe UI Symbol", monospace;
+    }
+    .tile-heard {
+      margin-top: 3px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      color: #fecaca;
+      background: rgba(239, 68, 68, 0.25);
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-family: "Lucida Sans Unicode", "DejaVu Sans", monospace;
+    }
+    .tile-phonemes {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 3px;
+      margin-top: 6px;
+    }
+    .p-pill {
+      font-size: 0.7rem;
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: rgba(11, 17, 32, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-family: "Lucida Sans Unicode", "DejaVu Sans", monospace;
+    }
+    .p-pill.ok { color: #86efac; border-color: rgba(34, 197, 94, 0.45); }
+    .p-pill.err { color: #fca5a5; border-color: rgba(239, 68, 68, 0.85); font-weight: 800; }
+
+    /* Responsive Waveform Bar */
+    .wave-bar {
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .wave-canvas-wrap {
+      flex: 1;
+      min-width: 0;
+      height: 44px;
+    }
+    #waveCanvas {
+      width: 100%;
+      height: 44px;
+      display: block;
+    }
+    .vad-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    /* Primary Action Dock */
+    .action-dock {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+      gap: 10px;
+    }
+    .action-btn, .upload-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 48px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 700;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-align: center;
+    }
+    .action-btn:hover:not(:disabled), .upload-btn:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .action-btn.guided {
+      background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+      border: none;
+      color: white;
+      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+    }
+    .action-btn.record {
+      background: var(--green);
+      color: #052e16;
+      border: none;
+      font-weight: 800;
+      box-shadow: 0 4px 16px rgba(34, 197, 94, 0.3);
+    }
+    .action-btn.record.recording {
+      background: var(--red);
+      color: white;
+      animation: pulse 1.1s infinite;
+      box-shadow: 0 0 22px rgba(239, 68, 68, 0.6);
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.03); }
+    }
+    input[type="file"] { display: none; }
+
+    .shortcut-hint {
+      text-align: center;
+      font-size: 0.73rem;
+      color: var(--muted);
+      margin-top: -4px;
+    }
+    kbd {
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+    }
+
+    /* --- 5. RESULTS DASHBOARD & FRIENDLY WORD COACH --- */
+    .results-grid {
+      display: none;
+      grid-template-columns: 280px 1fr;
+      gap: 16px;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    @media (max-width: 860px) {
+      .results-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Left: Circular Score & Sub-metrics */
+    .score-summary-card {
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .overall-ring-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .score-ring {
+      width: 78px;
+      height: 78px;
+      border-radius: 50%;
+      background: conic-gradient(var(--green) var(--pct, 0%), #1e293b 0);
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+    .score-ring-inner {
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      background: #0b1120;
+      display: grid;
+      place-items: center;
+      font-size: 1.25rem;
+      font-weight: 900;
+    }
+    .submetric-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .sub-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.78rem;
+    }
+    .sub-row-top {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      color: var(--text-secondary);
+    }
+    .sub-track {
+      height: 7px;
+      background: #1e293b;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .sub-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.4s ease;
+    }
+
+    /* Right: Word Coach Panel */
+    .coach-card {
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .coach-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .coach-tip {
+      background: rgba(56, 189, 248, 0.1);
+      border-left: 4px solid var(--accent);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.86rem;
+      color: var(--text);
+    }
+    .phoneme-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+      gap: 10px;
+    }
+    .p-card {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: transform 0.12s ease;
+    }
+    .p-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+    }
+    .p-card.ok { border-color: rgba(34, 197, 94, 0.5); }
+    .p-card.err { border-color: rgba(239, 68, 68, 0.75); }
+    .gop-meter {
+      height: 5px;
+      background: #1e293b;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .gop-fill {
+      height: 100%;
+      border-radius: 999px;
+    }
+
+    /* --- COUNTDOWN & ANALYSIS LOADING OVERLAYS --- */
+    .countdown-overlay, .analysis-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(7, 11, 20, 0.9);
+      backdrop-filter: blur(8px);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 40;
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      text-align: center;
+    }
+    .countdown-num {
+      font-size: 4.8rem;
+      font-weight: 900;
+      color: var(--accent);
+      text-shadow: 0 0 30px var(--accent);
+    }
+    .neural-spinner {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: 4px solid rgba(56, 189, 248, 0.18);
+      border-top-color: var(--accent);
+      border-right-color: var(--purple);
+      animation: spin 0.85s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .pipeline-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      text-align: left;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 0.82rem;
+      color: var(--muted);
+      max-width: 430px;
+      width: 100%;
+      margin-top: 12px;
+    }
+    .pipe-step.active { color: var(--text); font-weight: 700; }
+    .pipe-step.done { color: var(--green); }
+
+    /* Developer Telemetry Accordion */
+    details.dev-drawer {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 10px 16px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    details.dev-drawer summary {
+      cursor: pointer;
+      font-weight: 700;
+      user-select: none;
+    }
+    pre {
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      overflow-x: auto;
+      font-size: 0.76rem;
+      color: var(--text-secondary);
+      max-height: 240px;
+      margin: 10px 0 0;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="confettiCanvas"></canvas>
+
+  <div class="app-shell">
+    <!-- 1. TOP GAMIFIED HUD -->
+    <header class="top-hud">
+      <div class="brand-group">
+        <div class="brand-logo">🎙️</div>
+        <div>
+          <h1 class="brand-title">Pronunciation Shadowing Coach</h1>
+          <div class="engine-status">
+            <span class="status-dot" id="healthDot"></span>
+            <span id="healthText">Connecting to Local CPU ONNX Engine...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-widgets">
+        <div class="hud-chip streak" title="Score 80%+ to build your combo streak!">
+          🔥 <span id="streakCount">0</span> Streak · <span id="multiplierText">1x XP</span>
+        </div>
+        <div class="hud-chip" title="Quest Stars Earned">
+          ⭐ <span id="totalStars">0</span> / 15
+        </div>
+        <div class="xp-box">
+          <div class="xp-labels">
+            <span id="levelTitle">Lv. 1 · Novice</span>
+            <span id="xpCounter">0 / 100 XP</span>
+          </div>
+          <div class="xp-track">
+            <div class="xp-fill" id="xpBarFill"></div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 2. HORIZONTAL QUEST LEVEL DECK -->
+    <section class="quest-strip-wrapper">
+      <div class="strip-header">
+        <span>CHOOSE A SHADOWING CHALLENGE OR TYPE YOUR OWN SENTENCE BELOW</span>
+        <span>Swipe / Click a Quest Card</span>
+      </div>
+      <div class="quest-carousel" id="questDeck"></div>
+    </section>
+
+    <!-- 3. EASY-ACCESS PHRASE & ACCENT BAR -->
+    <section class="phrase-toolbar">
+      <div class="phrase-input-wrap">
+        <span>Phrase:</span>
+        <input
+          type="text"
+          id="referenceText"
+          value="She can see the sea"
+          oninput="onCustomTextChange()"
+          placeholder="Type any sentence to practice shadowing..."
+        />
+      </div>
+      <select id="languageSelect" class="toolbar-select" onchange="fetchPhonemizePreview()" title="Target Accent / Language">
+        <option value="en" selected>🇺🇸 English US</option>
+        <option value="en-gb">🇬🇧 English UK</option>
+        <option value="es">🇪🇸 Spanish</option>
+        <option value="fr">🇫🇷 French</option>
+        <option value="de">🇩🇪 German</option>
+        <option value="hi">🇮🇳 Hindi</option>
+      </select>
+      <select id="speedSelect" class="toolbar-select" title="Coach Speaking Speed">
+        <option value="1.0" selected>⚡ 1.0x Normal Speed</option>
+        <option value="0.85">🐢 0.85x Practice Speed</option>
+        <option value="0.7">🔍 0.70x Slow Articulation</option>
+      </select>
+    </section>
+
+    <!-- 4. MAIN INTERACTIVE SHADOWING WORKSPACE -->
+    <main class="workspace">
+      <!-- Guided 3-2-1 Countdown Overlay -->
+      <div class="countdown-overlay" id="countdownOverlay">
+        <div class="countdown-num" id="countdownNum">3</div>
+        <div style="font-size:1rem;font-weight:700;color:#cbd5e1;text-transform:uppercase;">
+          Get Ready to Repeat the Phrase Aloud...
+        </div>
+      </div>
+
+      <!-- Analysis Loading Screen Overlay -->
+      <div class="analysis-overlay" id="analysisOverlay">
+        <div class="neural-spinner"></div>
+        <div style="font-size:1.2rem;font-weight:800;">Analyzing Your Pronunciation...</div>
+        <div id="analysisTimer" style="font-family:monospace;color:var(--accent);margin-top:4px;">Elapsed: 0.00s</div>
+        <div class="pipeline-steps">
+          <div class="pipe-step active" id="pipeStep1">⚡ 1. Normalizing 16kHz Mono Audio & Trimming Silence</div>
+          <div class="pipe-step" id="pipeStep2">🧠 2. Single-Pass Wav2Vec2 ONNX Inference (CPU INT8)</div>
+          <div class="pipe-step" id="pipeStep3">🔬 3. Aligning IPA Phonemes & Scoring Articulatory Accuracy</div>
+        </div>
+      </div>
+
+      <!-- Step-by-Step User Flow Indicator -->
+      <div class="step-guide">
+        <div class="steps-pills">
+          <span class="step-pill current" id="stepPill1">① Listen to Coach</span>
+          <span class="step-pill" id="stepPill2">② Speak & Shadow Phrase</span>
+          <span class="step-pill" id="stepPill3">③ Tap Any Word for Mouth Tips</span>
+        </div>
+        <div class="rank-pill" id="rankBadge">
+          <span id="rankLetter" style="color:var(--gold);">Rank S</span>
+          <span id="rankStars">⭐⭐⭐</span>
+          <span id="xpEarnedTag" style="color:#86efac;">+50 XP</span>
+        </div>
+      </div>
+
+      <!-- Split Stage: Avatar Coach + Interactive Phrase -->
+      <div class="stage-grid">
+        <!-- Left: Live 3D Avatar Coach -->
+        <aside class="avatar-card">
+          <div class="avatar-header">
+            <select id="characterSelect" class="avatar-picker" onchange="switchAvatarCharacter(this.value)">
+              <option value="girl-3d" selected>👩 Coach Maya</option>
+              <option value="boy-3d">👦 Coach Leo</option>
+              <option value="kawaii-demo">✨ Kawaii Coach</option>
+              <option value="new-girl">👩‍🏫 Coach Aria</option>
+              <option value="nano-banana">🍌 Nano Banana</option>
+            </select>
+            <span class="viseme-tag" id="visemeBadge">Mouth: neutral</span>
+          </div>
+
+          <div class="avatar-viewport" id="avatarCanvasHost"></div>
+
+          <div style="width:100%;display:flex;flex-direction:column;gap:6px;">
+            <div class="coach-bubble" id="avatarBubble">
+              👋 Click <strong>Guided Practice</strong> or tap any word tile to see my mouth shape!
+            </div>
+            <div class="avatar-quick-btns">
+              <button type="button" class="mini-btn" onclick="triggerAvatarAction('nod')">👍 Nod</button>
+              <button type="button" class="mini-btn" onclick="triggerAvatarAction('happy')">😊 Smile</button>
+              <button type="button" class="mini-btn" onclick="demoVisemeCycle()">👄 Demo Mouths</button>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Right: Interactive Phrase Tiles + Waveform + Primary Buttons -->
+        <div class="shadow-column">
+          <div>
+            <div style="font-size:0.78rem;font-weight:700;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+              <span id="statusBanner">Tap any word below to hear it, or start Guided Practice</span>
+              <span>🟢 Good · 🟡 Almost · 🔴 Needs Practice</span>
+            </div>
+            <div class="phrase-box" id="phraseStage"></div>
+          </div>
+
+          <!-- Responsive Waveform & Smart VAD -->
+          <div class="wave-bar">
+            <div class="wave-canvas-wrap">
+              <canvas id="waveCanvas" width="680" height="44"></canvas>
+            </div>
+            <label class="vad-label" title="Automatically stops recording ~1s after you finish speaking">
+              <input type="checkbox" id="autoStopVad" checked />
+              Auto-Stop When Done
+            </label>
+          </div>
+
+          <!-- Large Touch-Friendly Action Buttons -->
+          <div class="action-dock">
+            <button type="button" class="action-btn" onclick="speakReferencePhrase(false)">
+              🔊 1. Listen to Coach
+            </button>
+            <button type="button" class="action-btn guided" onclick="startGuidedShadowQuest()">
+              🔁 Guided Practice (Auto)
+            </button>
+            <button type="button" class="action-btn record" id="recordBtn" onclick="toggleRecording()">
+              🎙️ 2. Speak & Score
+            </button>
+            <button type="button" class="action-btn" id="replaySyncBtn" onclick="playUserAudioSynced()" style="display:none;">
+              ▶️ Replay My Voice
+            </button>
+            <label class="upload-btn" for="wavFileInput">
+              📂 Upload WAV
+            </label>
+            <input type="file" id="wavFileInput" accept="audio/wav,audio/*" onchange="handleFileUpload(event)" />
+          </div>
+
+          <div class="shortcut-hint">
+            Tip: Press <kbd>Space</kbd> to Start/Stop Recording · Press <kbd>L</kbd> to Listen to Coach · Click any word tile to inspect
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. INTEGRATED SCORE SUMMARY & WORD COACH PANEL -->
+      <div class="results-grid" id="resultsGrid">
+        <!-- Left: Circular Overall Score + Sub-bars -->
+        <div class="score-summary-card">
+          <div class="overall-ring-row">
+            <div class="score-ring" id="overallRing" style="--pct: 0%;">
+              <div class="score-ring-inner" id="overallScore">-</div>
+            </div>
+            <div>
+              <div style="font-weight:800;font-size:1.05rem;" id="scoreVerdictTitle">Ready to Score</div>
+              <div style="font-size:0.78rem;color:var(--muted);" id="scoreVerdictSub">
+                Speak the phrase to see your breakdown
+              </div>
+            </div>
+          </div>
+
+          <div class="submetric-bars">
+            <div class="sub-row">
+              <div class="sub-row-top">
+                <span>Phoneme Accuracy</span>
+                <span id="accuracyScore">0%</span>
+              </div>
+              <div class="sub-track">
+                <div class="sub-fill" id="accuracyBar" style="width:0%;background:var(--green);"></div>
+              </div>
+            </div>
+            <div class="sub-row">
+              <div class="sub-row-top">
+                <span>Fluency & Smoothness</span>
+                <span id="fluencyScore">0%</span>
+              </div>
+              <div class="sub-track">
+                <div class="sub-fill" id="fluencyBar" style="width:0%;background:var(--accent);"></div>
+              </div>
+            </div>
+            <div class="sub-row">
+              <div class="sub-row-top">
+                <span>Prosody & Rhythm</span>
+                <span id="prosodyScore">0%</span>
+              </div>
+              <div class="sub-track">
+                <div class="sub-fill" id="prosodyBar" style="width:0%;background:var(--purple);"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Friendly Word & Sound Coach -->
+        <div class="coach-card" id="coachDrawer">
+          <div class="coach-header">
+            <div id="coachTitle" style="font-weight:800;font-size:1.05rem;">Select a word to inspect</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" class="mini-btn" id="playSliceBtn" onclick="playSelectedWordSlice()" style="display:none;color:var(--text);">
+                ▶️ Hear My Recording
+              </button>
+              <button type="button" class="mini-btn" onclick="speakSelectedWord()" style="color:var(--text);">
+                🔊 Hear Coach Word
+              </button>
+              <button type="button" class="mini-btn" onclick="practiceSingleWord()" style="border-color:var(--accent);color:var(--accent);">
+                🎯 Practice Just This Word
+              </button>
+            </div>
+          </div>
+          <div class="coach-tip" id="coachTipBox"></div>
+          <div class="phoneme-cards" id="phonemeGrid"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- 6. COLLAPSIBLE TECHNICAL TELEMETRY FOR DEVELOPERS -->
+    <details class="dev-drawer" id="devCard">
+      <summary>🛠️ Audio Playback & Raw API JSON Telemetry</summary>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px;">
+        <audio id="audioPreview" controls style="height:32px;"></audio>
+        <span id="audioMeta" style="font-size:0.78rem;color:var(--muted);">No recording yet</span>
+      </div>
+      <pre id="jsonOutput">// Run an assessment to inspect the raw POST /api/v1/pronunciation/assess JSON payload</pre>
+    </details>
+  </div>
+
+  <script src="/static/avatar-bundle.js"></script>
+  <script>
+    // --- CURATED PRONUNCIATION QUEST LEVELS ---
+    const QUESTS = [
+      {
+        id: "q1",
+        title: "Quest 1 · Easy",
+        phrase: "She can see the sea",
+        focus: "Sibilants /ʃ/ vs /s/",
+        difficulty: "Easy"
+      },
+      {
+        id: "q2",
+        title: "Quest 2 · Medium",
+        phrase: "She thought about the pronunciation",
+        focus: "Unvoiced 'TH' /θ/",
+        difficulty: "Medium"
+      },
+      {
+        id: "q3",
+        title: "Quest 3 · Medium",
+        phrase: "The weather is very warm today",
+        focus: "Lips /w/ vs Teeth /v/",
+        difficulty: "Medium"
+      },
+      {
+        id: "q4",
+        title: "Quest 4 · Hard",
+        phrase: "Three free throws in a row",
+        focus: "Cluster /θɹ/ vs /fɹ/",
+        difficulty: "Hard"
+      },
+      {
+        id: "q5",
+        title: "Quest 5 · Boss",
+        phrase: "Peter Piper picked a peck of pickled peppers",
+        focus: "Speed & Plosive /p/",
+        difficulty: "Boss"
+      }
+    ];
+
+    const PHONEME_TIPS = {
+      "θ": "Put the tip of your tongue lightly between your front teeth and blow air gently (like in 'think').",
+      "ð": "Put your tongue tip lightly between your teeth and hum/vibrate your throat (like in 'the' or 'this').",
+      "ʃ": "Round your lips slightly and make a soft 'shh' sound (like in 'she').",
+      "s": "Keep your teeth close together and make a crisp 'sss' snake sound.",
+      "ɹ": "Curl your tongue tip slightly back without touching the roof of your mouth.",
+      "iː": "Smile slightly and stretch the 'eee' vowel sound longer (like in 'see').",
+      "ɪ": "Keep your mouth relaxed for a short, quick 'ih' sound (like in 'it').",
+      "æ": "Open your jaw wider with your tongue low in the front (like in 'can' or 'cat').",
+      "ɑː": "Drop your jaw comfortably open for a deep 'ah' sound.",
+      "ɔː": "Round your lips into an oval shape for an 'aw' sound.",
+      "v": "Rest your top front teeth gently on your bottom lip and buzz your voice.",
+      "w": "Round your lips into a tight circle without touching your teeth to your lip."
+    };
+
+    let playerState = JSON.parse(localStorage.getItem("voiceQuestState") || "null") || {
+      xp: 0,
+      streak: 0,
+      questStars: {},
+      questBest: {}
+    };
+    let activeQuestId = "q1";
+    let previewWords = [];
+    let assessedWords = null;
+    let selectedWordIndex = null;
+    let currentWavBlob = null;
+    let currentAudioFloat32 = null;
+    let currentFileName = "shadowing_16k.wav";
+
+    let isRecording = false;
+    let audioCtx = null;
+    let analyserNode = null;
+    let mediaStream = null;
+    let processorNode = null;
+    let recordedFloat32Chunks = [];
+    let inputSampleRate = 48000;
+    let animFrameId = null;
+    let speechDetectedDuringRec = false;
+    let silentFramesAfterSpeech = 0;
+    let previewTimer = null;
+
+    // --- LIVE PIXI.JS AVATAR COACH CONTROLLER ---
+    let avatarRuntime = null;
+    let avatarVisemeTimers = [];
+
+    function setActiveStep(stepNum) {
+      [1, 2, 3].forEach((n) => {
+        const el = document.getElementById(`stepPill${n}`);
+        if (el) el.className = n === stepNum ? "step-pill current" : "step-pill";
+      });
+    }
+
+    function ipaToViseme(ipa) {
+      if (!ipa) return "neutral";
+      const s = ipa.toLowerCase();
+      if (s.includes("f") || s.includes("v") || s.includes("θ") || s.includes("ð")) return "fv";
+      if (s.includes("ɔ") || s.includes("o") || s.includes("u") || s.includes("ʊ") || s.includes("w")) return "o";
+      if (
+        s.includes("i") ||
+        s.includes("ɪ") ||
+        s.includes("e") ||
+        s.includes("s") ||
+        s.includes("z") ||
+        s.includes("ʃ") ||
+        s.includes("ʒ") ||
+        s.includes("j")
+      ) {
+        return "wide";
+      }
+      if (
+        s.includes("ɑ") ||
+        s.includes("æ") ||
+        s.includes("ʌ") ||
+        s.includes("ɐ") ||
+        s.includes("ə") ||
+        s.includes("ɜ") ||
+        s.includes("a") ||
+        s.includes("h")
+      ) {
+        return "open";
+      }
+      return "neutral";
+    }
+
+    function setAvatarMouthViseme(viseme, labelSuffix = "") {
+      if (avatarRuntime) avatarRuntime.setMouth(viseme);
+      const badge = document.getElementById("visemeBadge");
+      if (badge) badge.textContent = `Mouth: ${viseme}${labelSuffix ? " " + labelSuffix : ""}`;
+    }
+
+    function setAvatarBubble(text) {
+      const b = document.getElementById("avatarBubble");
+      if (b) b.innerHTML = text;
+    }
+
+    function clearAvatarVisemeTimers() {
+      avatarVisemeTimers.forEach(clearTimeout);
+      avatarVisemeTimers = [];
+    }
+
+    function playWordVisemeSequence(wordObj, durationMs = 340) {
+      if (!avatarRuntime || !wordObj) return;
+      clearAvatarVisemeTimers();
+      const rawList = Array.isArray(wordObj.phonemes)
+        ? wordObj.phonemes.map((p) => (typeof p === "string" ? p : p.expected || p.heard || ""))
+        : [wordObj.expected_ipa || ""];
+      const phonemes = rawList.filter(Boolean);
+      if (phonemes.length === 0) return;
+
+      const step = Math.max(65, durationMs / phonemes.length);
+      phonemes.forEach((ph, i) => {
+        avatarVisemeTimers.push(
+          setTimeout(() => {
+            setAvatarMouthViseme(ipaToViseme(ph), `(/${ph}/)`);
+          }, i * step)
+        );
+      });
+      avatarVisemeTimers.push(
+        setTimeout(() => {
+          setAvatarMouthViseme("neutral");
+        }, phonemes.length * step + 60)
+      );
+    }
+
+    async function initAvatarCoach(characterId = "girl-3d") {
+      if (!window.AvatarCoachEngine) return;
+      const host = document.getElementById("avatarCanvasHost");
+      if (!host) return;
+      try {
+        if (avatarRuntime) {
+          avatarRuntime.destroy();
+          avatarRuntime = null;
+        }
+        host.innerHTML = "";
+        const renderer = new window.AvatarCoachEngine.PixiRenderer();
+        const rt = new window.AvatarCoachEngine.AvatarRuntime({
+          characterUrl: `/characters/${characterId}`,
+          renderer
+        });
+        await rt.ready;
+        const canvas = renderer.getSurfaceElement();
+        if (canvas) host.appendChild(canvas);
+        await rt.load(`/characters/${characterId}`);
+        rt.on("mouth.changed", ({ mouth }) => {
+          const badge = document.getElementById("visemeBadge");
+          if (badge) badge.textContent = `Mouth: ${mouth}`;
+        });
+        avatarRuntime = rt;
+      } catch (err) {
+        console.warn("Avatar Coach init warning:", err);
+      }
+    }
+
+    async function switchAvatarCharacter(characterId) {
+      setAvatarBubble(`✨ Loading <strong>${characterId}</strong>...`);
+      await initAvatarCoach(characterId);
+      setAvatarBubble("👋 Ready! Tap any word tile or press Guided Practice!");
+    }
+
+    function triggerAvatarAction(action) {
+      if (!avatarRuntime) return;
+      if (action === "nod") {
+        avatarRuntime.playGesture("nod");
+        setAvatarBubble("👍 You've got this! Keep practicing!");
+      } else if (action === "happy") {
+        avatarRuntime.setExpression("happy", 1.0);
+        setAvatarMouthViseme("smile");
+        setAvatarBubble("😊 Great energy!");
+      }
+    }
+
+    function demoVisemeCycle() {
+      const demo = [
+        { v: "wide", ipa: "ʃ / iː" },
+        { v: "open", ipa: "æ / ɑː" },
+        { v: "o", ipa: "ɔː / uː" },
+        { v: "fv", ipa: "θ / ð / f" },
+        { v: "neutral", ipa: "m / b / p" },
+        { v: "smile", ipa: "😊" }
+      ];
+      clearAvatarVisemeTimers();
+      setAvatarBubble("👄 Showing how my mouth shapes each IPA sound group...");
+      demo.forEach((item, idx) => {
+        avatarVisemeTimers.push(
+          setTimeout(() => {
+            setAvatarMouthViseme(item.v, `(/${item.ipa}/)`);
+          }, idx * 420)
+        );
+      });
+    }
+
+    function savePlayerState() {
+      localStorage.setItem("voiceQuestState", JSON.stringify(playerState));
+      updateHudUI();
+      renderQuestDeck();
+    }
+
+    function updateHudUI() {
+      const level = Math.floor(playerState.xp / 100) + 1;
+      const xpInLevel = playerState.xp % 100;
+      const titles = ["Novice", "Apprentice", "Ranger", "Knight", "Grandmaster"];
+      const title = titles[Math.min(titles.length - 1, level - 1)];
+
+      document.getElementById("levelTitle").textContent = `Lv. ${level} · ${title}`;
+      document.getElementById("xpCounter").textContent = `${xpInLevel} / 100 XP`;
+      document.getElementById("xpBarFill").style.width = `${xpInLevel}%`;
+      document.getElementById("streakCount").textContent = playerState.streak;
+
+      const mult = playerState.streak >= 5 ? "2.5x XP" : playerState.streak >= 2 ? "1.5x XP" : "1x XP";
+      document.getElementById("multiplierText").textContent = mult;
+
+      const totalStars = Object.values(playerState.questStars).reduce((a, b) => a + b, 0);
+      document.getElementById("totalStars").textContent = totalStars;
+    }
+
+    function renderQuestDeck() {
+      const deck = document.getElementById("questDeck");
+      deck.innerHTML = "";
+      QUESTS.forEach((q) => {
+        const stars = playerState.questStars[q.id] || 0;
+        const best = playerState.questBest[q.id];
+        const starStr = "⭐".repeat(stars) + "☆".repeat(3 - stars);
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = `quest-card ${activeQuestId === q.id ? "active" : ""}`;
+        card.onclick = () => selectQuest(q);
+        card.innerHTML = `
+          <div class="quest-card-top">
+            <span>${q.title}</span>
+            <span>${starStr}</span>
+          </div>
+          <div class="quest-card-phrase">"${q.phrase}"</div>
+          <div class="quest-card-meta">
+            ${q.focus} ${best !== undefined ? `· Best: <strong>${best}%</strong>` : ""}
+          </div>
+        `;
+        deck.appendChild(card);
+      });
+    }
+
+    function selectQuest(q) {
+      activeQuestId = q.id;
+      document.getElementById("referenceText").value = q.phrase;
+      assessedWords = null;
+      selectedWordIndex = null;
+      document.getElementById("rankBadge").style.display = "none";
+      setActiveStep(1);
+      renderQuestDeck();
+      fetchPhonemizePreview();
+      playTone(520, 0.05);
+    }
+
+    function onCustomTextChange() {
+      activeQuestId = null;
+      renderQuestDeck();
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(() => {
+        assessedWords = null;
+        selectedWordIndex = null;
+        setActiveStep(1);
+        fetchPhonemizePreview();
+      }, 220);
+    }
+
+    async function checkHealth() {
+      try {
+        const res = await fetch("/health");
+        const data = await res.json();
+        const dot = document.getElementById("healthDot");
+        const txt = document.getElementById("healthText");
+        if (data.mode_b && data.mode_b.ready) {
+          dot.className = "status-dot ready";
+          txt.textContent = `Local ${data.mode_b.device.toUpperCase()} Ready (${data.mode_b.provider})`;
+        }
+      } catch (e) {
+        document.getElementById("healthText").textContent = "Server Offline";
+      }
+    }
+
+    async function fetchPhonemizePreview() {
+      const text = document.getElementById("referenceText").value.trim();
+      const lang = document.getElementById("languageSelect").value;
+      if (!text) {
+        previewWords = [];
+        renderPhraseTiles();
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/v1/pronunciation/phonemize?text=${encodeURIComponent(text)}&language=${encodeURIComponent(lang)}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          previewWords = data.words || [];
+          renderPhraseTiles();
+        }
+      } catch (e) {
+        previewWords = text.split(/\s+/).map((w) => ({ word: w, expected_ipa: "...", phonemes: [] }));
+        renderPhraseTiles();
+      }
+    }
+
+    function renderPhraseTiles() {
+      const stage = document.getElementById("phraseStage");
+      stage.innerHTML = "";
+      const items = assessedWords || previewWords;
+
+      items.forEach((w, idx) => {
+        const tile = document.createElement("div");
+        const statusCls = w.status || "";
+        const selCls = selectedWordIndex === idx ? "selected-tile" : "";
+        tile.className = `word-tile ${statusCls} ${selCls}`.trim();
+        tile.id = `word-tile-${idx}`;
+        tile.onclick = () => {
+          openWordCoach(idx);
+          // Also speak the word if not yet scored so clicking a tile always gives instant audio + visual feedback
+          if (!w.status) speakSelectedWord();
+        };
+
+        const badgeHtml =
+          typeof w.score === "number" ? `<span class="tile-badge">${w.score}%</span>` : "";
+
+        const heardHtml =
+          w.status && w.status !== "correct"
+            ? `<div class="tile-heard">you said: /${w.heard_ipa || "∅"}/</div>`
+            : "";
+
+        let phonemesHtml = "";
+        if (Array.isArray(w.phonemes) && w.phonemes.length > 0) {
+          if (typeof w.phonemes[0] === "string") {
+            phonemesHtml = `<div class="tile-phonemes">${w.phonemes
+              .map((p) => `<span class="p-pill">${p}</span>`)
+              .join("")}</div>`;
+          } else {
+            phonemesHtml = `<div class="tile-phonemes">${w.phonemes
+              .map((p) => {
+                const ok = !p.error;
+                const label = ok ? p.expected : `${p.expected || "∅"}→${p.heard || "∅"}`;
+                return `<span class="p-pill ${ok ? "ok" : "err"}" title="Accuracy: ${p.gop_score}%">${label}</span>`;
+              })
+              .join("")}</div>`;
+          }
+        }
+
+        tile.innerHTML = `
+          ${badgeHtml}
+          <span class="tile-word">${w.word}</span>
+          <span class="tile-ipa">/${w.expected_ipa || ""}/</span>
+          ${heardHtml}
+          ${phonemesHtml}
+        `;
+        stage.appendChild(tile);
+      });
+    }
+
+    function openWordCoach(idx) {
+      selectedWordIndex = idx;
+      renderPhraseTiles();
+
+      const items = assessedWords || previewWords;
+      const w = items[idx];
+      if (!w) return;
+
+      document.getElementById("resultsGrid").style.display = "grid";
+      const title = document.getElementById("coachTitle");
+      const tipBox = document.getElementById("coachTipBox");
+      const grid = document.getElementById("phonemeGrid");
+      const sliceBtn = document.getElementById("playSliceBtn");
+
+      let tipText = "💡 Keep a steady breath stream and link each sound smoothly.";
+      const pList = Array.isArray(w.phonemes)
+        ? w.phonemes.map((p) => (typeof p === "string" ? p : p.expected))
+        : [];
+      if (w.status && w.status !== "correct" && Array.isArray(w.phonemes)) {
+        const errP = w.phonemes.find((p) => p.error && p.expected);
+        if (errP && PHONEME_TIPS[errP.expected]) {
+          tipText = `🎯 <strong>How to fix /${errP.expected}/ in "${w.word}":</strong> ${PHONEME_TIPS[errP.expected]}`;
+        } else if (errP) {
+          tipText = `🎯 <strong>Sound Tip for "${w.word}":</strong> We heard /${errP.heard || "silence"}/ instead of /${errP.expected}/. Click "Hear Coach Word" and watch the coach's mouth shape.`;
+        }
+      } else {
+        const known = pList.find((sym) => PHONEME_TIPS[sym]);
+        if (known) {
+          tipText = `💡 <strong>Mouth Tip for /${known}/:</strong> ${PHONEME_TIPS[known]}`;
+        }
+      }
+      tipBox.innerHTML = tipText;
+
+      if (w.status) {
+        const statusFriendly =
+          w.status === "correct"
+            ? "✅ Great Pronunciation"
+            : w.status === "warning"
+            ? "🟡 Close — Minor Sound Drift"
+            : "🔴 Mispronounced Sound Detected";
+        title.innerHTML = `"${w.word}" · ${w.score}% (${statusFriendly})`;
+        sliceBtn.style.display = currentAudioFloat32 ? "inline-flex" : "none";
+
+        grid.innerHTML = (w.phonemes || [])
+          .map((p) => {
+            const ok = !p.error;
+            const barColor =
+              p.gop_score >= 85 ? "var(--green)" : p.gop_score >= 60 ? "var(--amber)" : "var(--red)";
+            const friendlyDiag = !p.error
+              ? "Clear Match"
+              : p.error === "substitution"
+              ? `Said /${p.heard || "?"}/ instead`
+              : p.error === "deletion"
+              ? "Sound Skipped"
+              : "Extra Sound";
+            return `
+              <div class="p-card ${ok ? "ok" : "err"}" onclick="setAvatarMouthViseme(ipaToViseme('${p.expected || ""}'), '(/${p.expected || ""}/)')">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-family:monospace;font-size:1.05rem;font-weight:800;">
+                    /${p.expected || "∅"}/ ${!ok ? `→ /${p.heard || "∅"}/` : ""}
+                  </span>
+                  <span style="font-weight:800;color:${barColor};">${p.gop_score}%</span>
+                </div>
+                <div style="font-size:0.74rem;color:var(--muted);margin-top:3px;">
+                  ${friendlyDiag}
+                </div>
+                <div class="gop-meter">
+                  <div class="gop-fill" style="width:${p.gop_score}%;background:${barColor};"></div>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+      } else {
+        title.textContent = `"${w.word}" · Expected Sounds: /${w.expected_ipa}/`;
+        sliceBtn.style.display = "none";
+        grid.innerHTML = (w.phonemes || [])
+          .map(
+            (sym) => `
+            <div class="p-card" onclick="setAvatarMouthViseme(ipaToViseme('${sym}'), '(/${sym}/)')">
+              <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:var(--accent);">/${sym}/</div>
+              <div style="font-size:0.73rem;color:var(--muted);margin-top:3px;">Click to see mouth shape</div>
+            </div>
+          `
+          )
+          .join("");
+      }
+
+      if (avatarRuntime) {
+        const targetPhoneme =
+          w.status && w.status !== "correct" && Array.isArray(w.phonemes)
+            ? (w.phonemes.find((p) => p.error && p.expected) || {}).expected || w.expected_ipa
+            : w.expected_ipa;
+        const vis = ipaToViseme(targetPhoneme);
+        setAvatarMouthViseme(vis, `(/${targetPhoneme || ""}/)`);
+        setAvatarBubble(
+          `👄 Showing <strong>${vis}</strong> mouth shape for "<strong>${w.word}</strong>" (/${w.expected_ipa}/)`
+        );
+        playWordVisemeSequence(w, 480);
+      }
+    }
+
+    function practiceSingleWord() {
+      const items = assessedWords || previewWords;
+      if (selectedWordIndex === null || !items[selectedWordIndex]) return;
+      const singleWord = items[selectedWordIndex].word;
+      document.getElementById("referenceText").value = singleWord;
+      activeQuestId = null;
+      assessedWords = null;
+      selectedWordIndex = null;
+      renderQuestDeck();
+      fetchPhonemizePreview();
+      startGuidedShadowQuest();
+    }
+
+    function speakSelectedWord() {
+      const items = assessedWords || previewWords;
+      if (selectedWordIndex === null || !items[selectedWordIndex]) return;
+      const wordObj = items[selectedWordIndex];
+      const u = new SpeechSynthesisUtterance(wordObj.word);
+      u.lang = document.getElementById("languageSelect").value;
+      u.rate = parseFloat(document.getElementById("speedSelect").value || "1.0");
+      window.speechSynthesis.cancel();
+      playWordVisemeSequence(wordObj, 480);
+      window.speechSynthesis.speak(u);
+    }
+
+    function speakReferencePhrase(onDone) {
+      const text = document.getElementById("referenceText").value.trim();
+      if (!text) return;
+      window.speechSynthesis.cancel();
+      setActiveStep(1);
+
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = document.getElementById("languageSelect").value;
+      const rate = parseFloat(document.getElementById("speedSelect").value || "1.0");
+      u.rate = rate;
+
+      document.getElementById("statusBanner").textContent =
+        "🔊 Listening to Coach — Watch the glowing words & mouth shapes...";
+
+      const items = assessedWords || previewWords;
+      let boundaryFired = false;
+      u.onboundary = (e) => {
+        if (e.name === "word") {
+          boundaryFired = true;
+          const prefix = text.slice(0, e.charIndex);
+          const idx = Math.max(0, prefix.trim() ? prefix.trim().split(/\s+/).length : 0);
+          highlightWordTile(idx);
+        }
+      };
+
+      const approxMs = Math.max(1100, (items.length * 350) / rate);
+      const stepMs = approxMs / Math.max(1, items.length);
+      let timers = [];
+      u.onstart = () => {
+        if (avatarRuntime) {
+          avatarRuntime.setActivity("speaking");
+          avatarRuntime.setExpression("happy", 0.6);
+        }
+        setAvatarBubble(`🔊 Speaking: "<strong>${text}</strong>"`);
+        items.forEach((wordItem, i) => {
+          timers.push(
+            setTimeout(() => {
+              if (!boundaryFired) highlightWordTile(i);
+              playWordVisemeSequence(wordItem, stepMs * 0.9);
+            }, i * stepMs)
+          );
+        });
+      };
+
+      u.onend = () => {
+        timers.forEach(clearTimeout);
+        clearAvatarVisemeTimers();
+        clearWordHighlights();
+        if (avatarRuntime) {
+          avatarRuntime.setActivity("idle");
+          setAvatarMouthViseme("neutral");
+        }
+        setActiveStep(2);
+        setAvatarBubble("🎙️ Your turn! Click 'Speak & Score' to repeat the phrase.");
+        document.getElementById("statusBanner").textContent =
+          "🎙️ Now click '2. Speak & Score' (or press Space) and repeat the phrase!";
+        if (typeof onDone === "function") onDone();
+      };
+
+      window.speechSynthesis.speak(u);
+    }
+
+    function highlightWordTile(idx) {
+      clearWordHighlights();
+      const el = document.getElementById(`word-tile-${idx}`);
+      if (el) el.classList.add("speaking-now");
+    }
+
+    function clearWordHighlights() {
+      document.querySelectorAll(".word-tile.speaking-now").forEach((el) => {
+        el.classList.remove("speaking-now");
+      });
+    }
+
+    function startGuidedShadowQuest() {
+      if (isRecording) return;
+      speakReferencePhrase(() => {
+        const overlay = document.getElementById("countdownOverlay");
+        const numEl = document.getElementById("countdownNum");
+        overlay.style.display = "flex";
+        let count = 3;
+        numEl.textContent = count;
+        playTone(440, 0.08);
+
+        const iv = setInterval(() => {
+          count--;
+          if (count > 0) {
+            numEl.textContent = count;
+            playTone(440, 0.08);
+          } else {
+            clearInterval(iv);
+            overlay.style.display = "none";
+            playTone(880, 0.12);
+            if (!isRecording) toggleRecording();
+          }
+        }, 620);
+      });
+    }
+
+    async function toggleRecording() {
+      const btn = document.getElementById("recordBtn");
+      const banner = document.getElementById("statusBanner");
+
+      if (!isRecording) {
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+          });
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          inputSampleRate = audioCtx.sampleRate;
+          recordedFloat32Chunks = [];
+          speechDetectedDuringRec = false;
+          silentFramesAfterSpeech = 0;
+
+          const source = audioCtx.createMediaStreamSource(mediaStream);
+          analyserNode = audioCtx.createAnalyser();
+          analyserNode.fftSize = 256;
+
+          processorNode = audioCtx.createScriptProcessor(2048, 1, 1);
+          processorNode.onaudioprocess = (e) => {
+            if (!isRecording) return;
+            const ch = e.inputBuffer.getChannelData(0);
+            recordedFloat32Chunks.push(new Float32Array(ch));
+
+            let sumSq = 0;
+            for (let i = 0; i < ch.length; i++) sumSq += ch[i] * ch[i];
+            const rms = Math.sqrt(sumSq / ch.length);
+            if (rms > 0.025) {
+              speechDetectedDuringRec = true;
+              silentFramesAfterSpeech = 0;
+            } else if (speechDetectedDuringRec) {
+              silentFramesAfterSpeech++;
+              const autoVad = document.getElementById("autoStopVad").checked;
+              const framesFor950ms = Math.ceil((0.95 * inputSampleRate) / 2048);
+              if (autoVad && silentFramesAfterSpeech >= framesFor950ms) {
+                toggleRecording();
+              }
+            }
+          };
+
+          source.connect(analyserNode);
+          analyserNode.connect(processorNode);
+          processorNode.connect(audioCtx.destination);
+
+          isRecording = true;
+          setActiveStep(2);
+          btn.classList.add("recording");
+          btn.textContent = "⏹️ Stop & Score";
+          banner.textContent = "🎙️ Speak the phrase clearly now...";
+          if (avatarRuntime) {
+            avatarRuntime.setActivity("listening");
+            avatarRuntime.setExpression("neutral", 1.0);
+            avatarRuntime.setHeadTurn(0.12);
+            setAvatarBubble("👂 Listening closely to your pronunciation...");
+          }
+          drawLiveWaveform();
+        } catch (err) {
+          alert("Microphone access error: " + err.message);
+        }
+      } else {
+        isRecording = false;
+        cancelAnimationFrame(animFrameId);
+        btn.classList.remove("recording");
+        btn.textContent = "🎙️ 2. Speak & Score";
+
+        if (processorNode) processorNode.disconnect();
+        if (analyserNode) analyserNode.disconnect();
+        if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+        if (audioCtx) await audioCtx.close();
+
+        const merged = mergeBuffers(recordedFloat32Chunks);
+        const downsampled16k = downsampleBuffer(merged, inputSampleRate, 16000);
+        const trimmed16k = trimSilenceClientSide(downsampled16k, 16000);
+        currentAudioFloat32 = trimmed16k;
+        currentWavBlob = encodeMono16kWav(trimmed16k, 16000);
+        currentFileName = "shadowing_trimmed_16k.wav";
+        drawStaticWaveform(trimmed16k);
+        showAudioPreview(
+          currentWavBlob,
+          `16kHz Trimmed WAV (${(trimmed16k.length / 16000).toFixed(2)}s)`
+        );
+        await submitAssessment();
+      }
+    }
+
+    function drawLiveWaveform() {
+      const canvas = document.getElementById("waveCanvas");
+      const ctx = canvas.getContext("2d");
+      const bufLen = analyserNode ? analyserNode.frequencyBinCount : 64;
+      const dataArr = new Uint8Array(bufLen);
+
+      function render() {
+        if (!isRecording || !analyserNode) return;
+        animFrameId = requestAnimationFrame(render);
+        analyserNode.getByteFrequencyData(dataArr);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const barCount = 48;
+        const step = Math.floor(bufLen / barCount);
+        const barWidth = canvas.width / barCount - 4;
+
+        for (let i = 0; i < barCount; i++) {
+          const val = dataArr[i * step] / 255.0;
+          const h = Math.max(4, val * (canvas.height - 6));
+          const y = (canvas.height - h) / 2;
+          const grad = ctx.createLinearGradient(0, y, 0, y + h);
+          grad.addColorStop(0, "#38bdf8");
+          grad.addColorStop(1, "#a855f7");
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.roundRect(i * (barWidth + 4), y, barWidth, h, 4);
+          ctx.fill();
+        }
+      }
+      render();
+    }
+
+    function drawStaticWaveform(samples) {
+      const canvas = document.getElementById("waveCanvas");
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!samples || samples.length === 0) return;
+
+      const bars = 64;
+      const chunk = Math.max(1, Math.floor(samples.length / bars));
+      const barWidth = canvas.width / bars - 3;
+
+      for (let i = 0; i < bars; i++) {
+        let peak = 0;
+        const start = i * chunk;
+        for (let j = 0; j < chunk && start + j < samples.length; j++) {
+          const a = Math.abs(samples[start + j]);
+          if (a > peak) peak = a;
+        }
+        const h = Math.max(4, Math.min(1, peak * 1.8) * (canvas.height - 6));
+        const y = (canvas.height - h) / 2;
+        ctx.fillStyle = "#22c55e";
+        ctx.beginPath();
+        ctx.roundRect(i * (barWidth + 3), y, barWidth, h, 3);
+        ctx.fill();
+      }
+    }
+
+    async function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      currentWavBlob = file;
+      currentFileName = file.name;
+
+      try {
+        const arrayBuf = await file.arrayBuffer();
+        const tmpCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const decoded = await tmpCtx.decodeAudioData(arrayBuf);
+        currentAudioFloat32 = new Float32Array(decoded.getChannelData(0));
+        drawStaticWaveform(currentAudioFloat32);
+        await tmpCtx.close();
+      } catch (e) {
+        currentAudioFloat32 = null;
+      }
+
+      showAudioPreview(file, `Uploaded: ${file.name}`);
+      await submitAssessment();
+    }
+
+    function showAudioPreview(blob, labelText) {
+      const player = document.getElementById("audioPreview");
+      const meta = document.getElementById("audioMeta");
+      player.src = URL.createObjectURL(blob);
+      meta.textContent = labelText;
+    }
+
+    async function submitAssessment() {
+      if (!currentWavBlob) return;
+      const banner = document.getElementById("statusBanner");
+      const refText = document.getElementById("referenceText").value.trim();
+      const lang = document.getElementById("languageSelect").value;
+      if (!refText) return;
+
+      const overlay = document.getElementById("analysisOverlay");
+      const timerEl = document.getElementById("analysisTimer");
+      const s1 = document.getElementById("pipeStep1");
+      const s2 = document.getElementById("pipeStep2");
+      const s3 = document.getElementById("pipeStep3");
+
+      s1.className = "pipe-step active";
+      s2.className = "pipe-step";
+      s3.className = "pipe-step";
+      overlay.style.display = "flex";
+      if (avatarRuntime) {
+        avatarRuntime.setActivity("thinking");
+        avatarRuntime.setExpression("surprised", 0.5);
+        avatarRuntime.setGaze("up");
+        setAvatarBubble("🧠 Scoring your IPA phonemes on CPU ONNX...");
+      }
+
+      const t0 = performance.now();
+      const timerIv = setInterval(() => {
+        const sec = (performance.now() - t0) / 1000;
+        timerEl.textContent = `Elapsed: ${sec.toFixed(2)}s`;
+        if (sec > 0.08 && s1.classList.contains("active")) {
+          s1.className = "pipe-step done";
+          s2.className = "pipe-step active";
+        }
+        if (sec > 0.22 && s2.classList.contains("active")) {
+          s2.className = "pipe-step done";
+          s3.className = "pipe-step active";
+        }
+      }, 40);
+
+      try {
+        const fd = new FormData();
+        fd.append("audio", currentWavBlob, currentFileName);
+        fd.append("reference_text", refText);
+        fd.append("language", lang);
+
+        const res = await fetch("/api/v1/pronunciation/assess", {
+          method: "POST",
+          body: fd
+        });
+        const elapsedMs = Math.round(performance.now() - t0);
+        const data = await res.json();
+
+        if (!res.ok) {
+          banner.textContent = "❌ " + (data.detail || "Could not assess audio");
+          return;
+        }
+        s1.className = "pipe-step done";
+        s2.className = "pipe-step done";
+        s3.className = "pipe-step done";
+        handleGamifiedResults(data, elapsedMs);
+      } catch (e) {
+        banner.textContent = "❌ Request error: " + e.message;
+      } finally {
+        clearInterval(timerIv);
+        overlay.style.display = "none";
+      }
+    }
+
+    function handleGamifiedResults(data, elapsedMs) {
+      assessedWords = data.words || [];
+      setActiveStep(3);
+      renderPhraseTiles();
+
+      const score = data.overall_score;
+      document.getElementById("resultsGrid").style.display = "grid";
+      document.getElementById("overallScore").textContent = `${score}%`;
+
+      const ringColor = score >= 85 ? "var(--green)" : score >= 65 ? "var(--amber)" : "var(--red)";
+      const ringEl = document.getElementById("overallRing");
+      ringEl.style.background = `conic-gradient(${ringColor} ${score}%, #1e293b 0)`;
+
+      document.getElementById("scoreVerdictTitle").textContent =
+        score >= 90
+          ? "🌟 Excellent Pronunciation!"
+          : score >= 75
+          ? "👏 Good Job — Almost Native!"
+          : "💪 Keep Practicing — Tap Red Words!";
+      document.getElementById("scoreVerdictSub").textContent = `Scored in ${elapsedMs}ms on Local CPU`;
+
+      document.getElementById("accuracyScore").textContent = `${data.metrics.accuracy}%`;
+      document.getElementById("accuracyBar").style.width = `${data.metrics.accuracy}%`;
+      document.getElementById("fluencyScore").textContent = `${data.metrics.fluency}%`;
+      document.getElementById("fluencyBar").style.width = `${data.metrics.fluency}%`;
+      document.getElementById("prosodyScore").textContent = `${data.metrics.prosody_similarity}%`;
+      document.getElementById("prosodyBar").style.width = `${data.metrics.prosody_similarity}%`;
+      document.getElementById("replaySyncBtn").style.display = "inline-flex";
+
+      const stars = score >= 90 ? 3 : score >= 75 ? 2 : score >= 55 ? 1 : 0;
+      const rank = score >= 92 ? "S" : score >= 82 ? "A" : score >= 68 ? "B" : "C";
+
+      if (score >= 80) playerState.streak += 1;
+      else playerState.streak = 0;
+
+      const mult = playerState.streak >= 5 ? 2.5 : playerState.streak >= 2 ? 1.5 : 1.0;
+      const earnedXp = Math.round((15 + stars * 12) * mult);
+      playerState.xp += earnedXp;
+
+      if (activeQuestId) {
+        playerState.questStars[activeQuestId] = Math.max(
+          playerState.questStars[activeQuestId] || 0,
+          stars
+        );
+        playerState.questBest[activeQuestId] = Math.max(
+          playerState.questBest[activeQuestId] || 0,
+          score
+        );
+      }
+      savePlayerState();
+
+      const rankBadge = document.getElementById("rankBadge");
+      rankBadge.style.display = "inline-flex";
+      document.getElementById("rankLetter").textContent = `Rank ${rank}`;
+      document.getElementById("rankStars").textContent =
+        "⭐".repeat(stars) + "☆".repeat(3 - stars);
+      document.getElementById("xpEarnedTag").textContent = `+${earnedXp} XP`;
+
+      if (stars >= 2) {
+        playVictoryChime(stars === 3);
+        if (stars === 3) launchConfetti();
+        if (avatarRuntime) {
+          avatarRuntime.setActivity("idle");
+          avatarRuntime.setGaze("forward");
+          avatarRuntime.setHeadTurn(0);
+          avatarRuntime.setExpression("happy", 1.0);
+          avatarRuntime.playGesture("nod");
+          setAvatarMouthViseme("smile");
+          setAvatarBubble(`🎉 Awesome! You scored <strong>${score}% (Rank ${rank})</strong>!`);
+        }
+      } else {
+        playTone(320, 0.12);
+        if (avatarRuntime) {
+          avatarRuntime.setActivity("idle");
+          avatarRuntime.setGaze("forward");
+          avatarRuntime.setHeadTurn(0);
+          avatarRuntime.setExpression(score >= 60 ? "concerned" : "confused", 0.9);
+          avatarRuntime.playGesture("shake-head");
+          setAvatarBubble(`💡 Tap the highlighted word below to see how to fix it!`);
+        }
+      }
+
+      document.getElementById("statusBanner").textContent =
+        "✅ Tap any word tile below to hear it and see mouth placement tips";
+
+      if (assessedWords.length > 0) {
+        let minIdx = 0;
+        for (let i = 1; i < assessedWords.length; i++) {
+          if (assessedWords[i].score < assessedWords[minIdx].score) minIdx = i;
+        }
+        openWordCoach(minIdx);
+      }
+
+      document.getElementById("jsonOutput").textContent =
+        `// End-to-End Inference Latency: ${elapsedMs} ms\n` + JSON.stringify(data, null, 2);
+    }
+
+    function playUserAudioSynced() {
+      const player = document.getElementById("audioPreview");
+      if (!player.src || !assessedWords) return;
+      player.currentTime = 0;
+      player.play();
+
+      const iv = setInterval(() => {
+        if (player.paused || player.ended) {
+          clearInterval(iv);
+          clearWordHighlights();
+          return;
+        }
+        const curMs = player.currentTime * 1000;
+        clearWordHighlights();
+        assessedWords.forEach((w, idx) => {
+          if (curMs >= w.start_ms && curMs <= w.end_ms + 60) {
+            const el = document.getElementById(`word-tile-${idx}`);
+            if (el) el.classList.add("speaking-now");
+          }
+        });
+      }, 30);
+    }
+
+    function playSelectedWordSlice() {
+      if (!currentAudioFloat32 || !assessedWords || selectedWordIndex === null) return;
+      const w = assessedWords[selectedWordIndex];
+      if (!w) return;
+      const s = Math.max(0, Math.floor((w.start_ms / 1000) * 16000) - 480);
+      const e = Math.min(currentAudioFloat32.length, Math.ceil((w.end_ms / 1000) * 16000) + 640);
+      const slice = currentAudioFloat32.slice(s, Math.max(s + 320, e));
+      const blob = encodeMono16kWav(slice, 16000);
+      const audio = new Audio(URL.createObjectURL(blob));
+      highlightWordTile(selectedWordIndex);
+      audio.onended = () => clearWordHighlights();
+      audio.play();
+    }
+
+    // Keyboard shortcuts (Space = Record/Stop, L = Listen) when not focused in text input
+    window.addEventListener("keydown", (e) => {
+      const tag = (e.target && e.target.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        toggleRecording();
+      } else if (e.key === "l" || e.key === "L") {
+        e.preventDefault();
+        speakReferencePhrase(false);
+      }
+    });
+
+    // --- MODE A: PURE LOW-LATENCY WEBSOCKET STT (/ws/transcribe) ---
+    let isModeAStreaming = false;
+    let modeAWs = null;
+    let modeAAudioCtx = null;
+    let modeAStream = null;
+    let modeAProcessor = null;
+    let modeAInputRate = 48000;
+    let modeALastSendTs = 0;
+    let modeAFinalSentences = [];
+
+    function clearModeATranscript() {
+      modeAFinalSentences = [];
+      document.getElementById("liveSttFinalHistory").textContent = "";
+      document.getElementById("liveSttTranscript").textContent = "Listening...";
+      document.getElementById("liveSttConfidence").textContent = "";
+    }
+
+    async function toggleModeALiveStream() {
+      const btn = document.getElementById("modeALiveBtn");
+      const bar = document.getElementById("liveSttBar");
+      const finalHistoryEl = document.getElementById("liveSttFinalHistory");
+      const transcriptEl = document.getElementById("liveSttTranscript");
+      const confEl = document.getElementById("liveSttConfidence");
+      const stateEl = document.getElementById("liveSttState");
+
+      if (!isModeAStreaming) {
+        const lang = document.getElementById("languageSelect").value || "en";
+        const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${wsProto}//${window.location.host}/ws/transcribe?lang=${encodeURIComponent(lang)}`;
+
+        try {
+          modeAStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+          });
+          modeAAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          modeAInputRate = modeAAudioCtx.sampleRate;
+
+          modeAWs = new WebSocket(wsUrl);
+          bar.style.display = "block";
+          transcriptEl.textContent = "Connecting to /ws/transcribe...";
+
+          modeAWs.onopen = () => {
+            stateEl.textContent = `🟢 MODE A LIVE STT ACTIVE (/ws/transcribe?lang=${lang})`;
+            transcriptEl.textContent = "🎙️ Speak now — streaming 16kHz PCM chunks...";
+          };
+
+          modeAWs.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            const rttMs = modeALastSendTs ? Math.round(performance.now() - modeALastSendTs) : 0;
+            if (msg.error) {
+              transcriptEl.textContent = "Error: " + msg.error;
+              return;
+            }
+            if (msg.type === "interim") {
+              transcriptEl.textContent = `${msg.transcript} ...`;
+              confEl.textContent = `INTERIM · Conf: ${Math.round((msg.confidence || 0) * 100)}% · ~${rttMs}ms`;
+            } else if (msg.type === "final" && msg.transcript) {
+              modeAFinalSentences.push(msg.transcript);
+              finalHistoryEl.textContent = modeAFinalSentences.join(" ");
+              transcriptEl.textContent = "(Listening for next phrase...)";
+              confEl.textContent = `FINAL · Conf: ${Math.round((msg.confidence || 0) * 100)}% · ~${rttMs}ms`;
+              document.getElementById("jsonOutput").textContent =
+                `// Latest Mode A WebSocket Event (/ws/transcribe?lang=${lang})\n` +
+                JSON.stringify(msg, null, 2);
+            }
+          };
+
+          const source = modeAAudioCtx.createMediaStreamSource(modeAStream);
+          analyserNode = modeAAudioCtx.createAnalyser();
+          analyserNode.fftSize = 256;
+          // 2048 samples @ 48kHz = ~42ms low-latency audio buffer chunks
+          modeAProcessor = modeAAudioCtx.createScriptProcessor(2048, 1, 1);
+
+          let pcmAccumulator = [];
+          let accSamples = 0;
+          // Send every 100ms (1600 samples @ 16kHz) for instant word-by-word Sherpa-ONNX streaming
+          const targetChunkSamples16k = 1600;
+
+          modeAProcessor.onaudioprocess = (e) => {
+            if (!isModeAStreaming) return;
+            const ch = e.inputBuffer.getChannelData(0);
+            const ds16k = downsampleBuffer(ch, modeAInputRate, 16000);
+            pcmAccumulator.push(ds16k);
+            accSamples += ds16k.length;
+
+            if (accSamples >= targetChunkSamples16k && modeAWs && modeAWs.readyState === WebSocket.OPEN) {
+              const merged16k = mergeBuffers(pcmAccumulator);
+              pcmAccumulator = [];
+              accSamples = 0;
+
+              const pcm16 = new Int16Array(merged16k.length);
+              for (let i = 0; i < merged16k.length; i++) {
+                const s = Math.max(-1, Math.min(1, merged16k[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+              }
+              modeALastSendTs = performance.now();
+              modeAWs.send(pcm16.buffer);
+            }
+          };
+
+          source.connect(analyserNode);
+          analyserNode.connect(modeAProcessor);
+          modeAProcessor.connect(modeAAudioCtx.destination);
+
+          isModeAStreaming = true;
+          isRecording = true;
+          btn.classList.add("recording");
+          btn.style.background = "var(--red)";
+          btn.style.color = "#fff";
+          btn.textContent = "⏹️ Stop Mode A Live STT";
+          if (avatarRuntime) {
+            avatarRuntime.setActivity("listening");
+            avatarRuntime.setHeadTurn(0.12);
+            setAvatarBubble("⚡ Mode A Pure Live STT active! Watch your words appear live...");
+          }
+          drawLiveWaveform();
+        } catch (err) {
+          alert("Could not start Mode A live stream: " + err.message);
+        }
+      } else {
+        isModeAStreaming = false;
+        isRecording = false;
+        cancelAnimationFrame(animFrameId);
+        btn.classList.remove("recording");
+        btn.style.background = "";
+        btn.style.color = "var(--accent)";
+        btn.textContent = "⚡ Mode A Live STT (Free-Speak)";
+
+        if (modeAProcessor) modeAProcessor.disconnect();
+        if (analyserNode) analyserNode.disconnect();
+        if (modeAStream) modeAStream.getTracks().forEach((t) => t.stop());
+        if (modeAAudioCtx) await modeAAudioCtx.close();
+
+        if (modeAWs && modeAWs.readyState === WebSocket.OPEN) {
+          modeAWs.send(JSON.stringify({ type: "close" }));
+        }
+        stateEl.textContent = "⏹️ MODE A STREAM STOPPED";
+        if (avatarRuntime) {
+          avatarRuntime.setActivity("idle");
+          avatarRuntime.setHeadTurn(0);
+          setAvatarBubble("👍 Mode A Live STT stopped.");
+        }
+      }
+    }
+
+    function playTone(freq, durationSec) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationSec);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + durationSec);
+        setTimeout(() => ctx.close(), durationSec * 1000 + 100);
+      } catch (e) {}
+    }
+
+    function playVictoryChime(isThreeStar) {
+      const notes = isThreeStar ? [523.25, 659.25, 783.99, 1046.5] : [523.25, 659.25, 783.99];
+      notes.forEach((n, idx) => {
+        setTimeout(() => playTone(n, 0.16), idx * 95);
+      });
+    }
+
+    function launchConfetti() {
+      const canvas = document.getElementById("confettiCanvas");
+      const ctx = canvas.getContext("2d");
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      const colors = ["#38bdf8", "#22c55e", "#facc15", "#a855f7", "#f43f5e"];
+      const particles = Array.from({ length: 75 }, () => ({
+        x: canvas.width / 2 + (Math.random() - 0.5) * 260,
+        y: canvas.height * 0.35,
+        vx: (Math.random() - 0.5) * 14,
+        vy: -Math.random() * 12 - 4,
+        size: Math.random() * 7 + 5,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        rot: Math.random() * 6.28,
+        vrot: (Math.random() - 0.5) * 0.25
+      }));
+
+      let frame = 0;
+      function step() {
+        frame++;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        particles.forEach((p) => {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vy += 0.35;
+          p.rot += p.vrot;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.rot);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+          ctx.restore();
+        });
+        if (frame < 95) requestAnimationFrame(step);
+        else ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      step();
+    }
+
+    function mergeBuffers(chunks) {
+      const total = chunks.reduce((acc, c) => acc + c.length, 0);
+      const out = new Float32Array(total);
+      let offset = 0;
+      for (const c of chunks) {
+        out.set(c, offset);
+        offset += c.length;
+      }
+      return out;
+    }
+
+    function downsampleBuffer(buffer, inRate, outRate) {
+      if (inRate === outRate) return buffer;
+      const ratio = inRate / outRate;
+      const newLen = Math.round(buffer.length / ratio);
+      const result = new Float32Array(newLen);
+      for (let i = 0; i < newLen; i++) {
+        const start = Math.floor(i * ratio);
+        const end = Math.min(buffer.length, Math.floor((i + 1) * ratio));
+        let sum = 0, count = 0;
+        for (let j = start; j < end; j++) { sum += buffer[j]; count++; }
+        result[i] = count > 0 ? sum / count : buffer[start];
+      }
+      return result;
+    }
+
+    function trimSilenceClientSide(samples, sampleRate) {
+      const frameLen = Math.floor(sampleRate * 0.02);
+      const numFrames = Math.floor(samples.length / frameLen);
+      if (numFrames <= 2) return samples;
+
+      let peakRms = 0;
+      const rmsArr = new Float32Array(numFrames);
+      for (let f = 0; f < numFrames; f++) {
+        let sumSq = 0;
+        const base = f * frameLen;
+        for (let i = 0; i < frameLen; i++) {
+          const v = samples[base + i];
+          sumSq += v * v;
+        }
+        const rms = Math.sqrt(sumSq / frameLen);
+        rmsArr[f] = rms;
+        if (rms > peakRms) peakRms = rms;
+      }
+      if (peakRms < 1e-4) return samples;
+
+      const thresh = peakRms * 0.025;
+      let firstActive = 0, lastActive = numFrames - 1;
+      while (firstActive < numFrames && rmsArr[firstActive] < thresh) firstActive++;
+      while (lastActive > firstActive && rmsArr[lastActive] < thresh) lastActive--;
+
+      const pad = Math.floor(sampleRate * 0.06);
+      const start = Math.max(0, firstActive * frameLen - pad);
+      const end = Math.min(samples.length, (lastActive + 1) * frameLen + pad);
+      return samples.slice(start, end);
+    }
+
+    function encodeMono16kWav(samples, sampleRate) {
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+      const writeStr = (off, s) => {
+        for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+      };
+      writeStr(0, "RIFF");
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeStr(8, "WAVE");
+      writeStr(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, "data");
+      view.setUint32(40, samples.length * 2, true);
+
+      let offset = 44;
+      for (let i = 0; i < samples.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    updateHudUI();
+    renderQuestDeck();
+    checkHealth();
+    fetchPhonemizePreview();
+    initAvatarCoach("girl-3d");
+  </script>
+</body>
+</html>

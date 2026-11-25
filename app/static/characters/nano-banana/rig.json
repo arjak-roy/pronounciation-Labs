@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "1.0",
+  "nodes": [
+    {
+      "id": "head",
+      "parent": "root",
+      "asset": "assets/head.png",
+      "position": { "x": 512, "y": 512 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 10
+    },
+    {
+      "id": "leftEye",
+      "parent": "head",
+      "asset": "assets/eye-left.png",
+      "position": { "x": -45, "y": -45 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 20
+    },
+    {
+      "id": "rightEye",
+      "parent": "head",
+      "asset": "assets/eye-right.png",
+      "position": { "x": 45, "y": -45 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 20
+    },
+    {
+      "id": "leftEyebrow",
+      "parent": "head",
+      "asset": "assets/eyebrow-left.png",
+      "position": { "x": -45, "y": -140 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 20
+    },
+    {
+      "id": "rightEyebrow",
+      "parent": "head",
+      "asset": "assets/eyebrow-right.png",
+      "position": { "x": 45, "y": -140 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 20
+    },
+    {
+      "id": "mouth",
+      "parent": "head",
+      "asset": "assets/mouth-neutral.png",
+      "position": { "x": 0, "y": 120 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 20
+    },
+    {
+      "id": "leftBlush",
+      "parent": "head",
+      "asset": "assets/blush-left.png",
+      "position": { "x": -65, "y": 60 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 15,
+      "alpha": 0.0
+    },
+    {
+      "id": "rightBlush",
+      "parent": "head",
+      "asset": "assets/blush-right.png",
+      "position": { "x": 65, "y": 60 },
+      "pivot": { "x": 0.5, "y": 0.5 },
+      "zIndex": 15,
+      "alpha": 0.0
+    }
+  ]
+}

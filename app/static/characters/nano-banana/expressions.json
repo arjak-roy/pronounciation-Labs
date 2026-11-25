@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "1.0",
+  "expressions": {
+    "neutral": {
+      "duration": 250,
+      "nodes": {
+        "leftEye": { "scaleY": 1.0 },
+        "rightEye": { "scaleY": 1.0 },
+        "leftEyebrow": { "y": 0 },
+        "rightEyebrow": { "y": 0 },
+        "leftBlush": { "alpha": 0.0 },
+        "rightBlush": { "alpha": 0.0 }
+      },
+      "sprites": {
+        "leftEye": "assets/eye-left.png",
+        "rightEye": "assets/eye-right.png",
+        "leftEyebrow": "assets/eyebrow-left.png",
+        "rightEyebrow": "assets/eyebrow-right.png",
+        "mouth": "assets/mouth-neutral.png"
+      }
+    },
+    "happy": {
+      "duration": 250,
+      "nodes": {
+        "leftEye": { "scaleY": 1.0 },
+        "rightEye": { "scaleY": 1.0 },
+        "leftEyebrow": { "y": -10 },
+        "rightEyebrow": { "y": -10 },
+        "leftBlush": { "alpha": 0.8 },
+        "rightBlush": { "alpha": 0.8 }
+      },
+      "sprites": {
+        "leftEye": "assets/eye-left-squint.png",
+        "rightEye": "assets/eye-right-squint.png",
+        "leftEyebrow": "assets/eyebrow-left.png",
+        "rightEyebrow": "assets/eyebrow-right.png",
+        "mouth": "assets/mouth-smile.png"
+      }
+    },
+    "sad": {
+      "duration": 300,
+      "nodes": {
+        "leftEyebrow": { "y": 10 },
+        "rightEyebrow": { "y": 10 }
+      },
+      "sprites": {
+        "leftEye": "assets/eye-left.png",
+        "rightEye": "assets/eye-right.png",
+        "leftEyebrow": "assets/eyebrow-left-concerned.png",
+        "rightEyebrow": "assets/eyebrow-right-concerned.png",
+        "mouth": "assets/mouth-sad.png"
+      }
+    },
+    "surprised": {
+      "duration": 150,
+      "nodes": {
+        "leftEye": { "scaleY": 1.1, "scaleX": 1.1 },
+        "rightEye": { "scaleY": 1.1, "scaleX": 1.1 },
+        "leftEyebrow": { "y": -20 },
+        "rightEyebrow": { "y": -20 }
+      },
+      "sprites": {
+        "leftEye": "assets/eye-left.png",
+        "rightEye": "assets/eye-right.png",
+        "leftEyebrow": "assets/eyebrow-left-raised.png",
+        "rightEyebrow": "assets/eyebrow-right-raised.png",
+        "mouth": "assets/mouth-o.png"
+      }
+    },
+    "confused": {
+      "duration": 200,
+      "nodes": {
+        "leftEyebrow": { "y": 10 },
+        "rightEyebrow": { "y": -10 }
+      },
+      "sprites": {
+        "leftEye": "assets/eye-left.png",
+        "rightEye": "assets/eye-right.png",
+        "leftEyebrow": "assets/eyebrow-left-concerned.png",
+        "rightEyebrow": "assets/eyebrow-right-raised.png",
+        "mouth": "assets/mouth-sad.png"
+      }
+    },
+    "concerned": {
+      "duration": 250,
+      "nodes": {
+        "leftEyebrow": { "y": 5 },
+        "rightEyebrow": { "y": 5 }
+      },
+      "sprites": {
+        "leftEye": "assets/eye-left.png",
+        "rightEye": "assets/eye-right.png",
+        "leftEyebrow": "assets/eyebrow-left-concerned.png",
+        "rightEyebrow": "assets/eyebrow-right-concerned.png",
+        "mouth": "assets/mouth-neutral.png"
+      }
+    }
+  }
+}

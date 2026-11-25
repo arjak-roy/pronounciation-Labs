@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "id": "new-girl",
+  "name": "New Girl",
+  "canvas": {
+    "width": 1024,
+    "height": 1024
+  },
+  "defaultState": {
+    "activity": "idle",
+    "expression": "neutral",
+    "gaze": "forward"
+  },
+  "files": {
+    "rig": "rig.json",
+    "expressions": "expressions.json",
+    "animations": "animations.json",
+    "states": "states.json"
+  },
+  "capabilities": {
+    "activities": ["idle", "listening", "thinking", "speaking"],
+    "expressions": ["neutral", "happy", "sad", "surprised", "confused", "concerned"],
+    "gestures": ["nod", "shake-head"],
+    "gaze": ["forward", "left", "right", "up", "down"]
+  }
+}

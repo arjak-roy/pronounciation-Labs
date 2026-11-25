@@ -1,0 +1,159 @@
+{
+  "schemaVersion": "1.0",
+  "nodes": [
+    {
+      "id": "head",
+      "parent": "root",
+      "asset": "assets/head.png",
+      "position": {
+        "x": 512,
+        "y": 512
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 10
+    },
+    {
+      "id": "leftEye",
+      "parent": "head",
+      "asset": "assets/eye-left.png",
+      "position": {
+        "x": -58.061855670103114,
+        "y": 38.72285773410317
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 20,
+      "scale": {
+        "x": 1,
+        "y": 1
+      },
+      "rotation": 0,
+      "alpha": 1
+    },
+    {
+      "id": "rightEye",
+      "parent": "head",
+      "asset": "assets/eye-right.png",
+      "position": {
+        "x": 44.338152384020646,
+        "y": 36.91114657596347
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 20,
+      "scale": {
+        "x": 1,
+        "y": 1
+      },
+      "rotation": 0,
+      "alpha": 1
+    },
+    {
+      "id": "leftEyebrow",
+      "parent": "head",
+      "asset": "assets/eyebrow-left.png",
+      "position": {
+        "x": -65.4515544458763,
+        "y": -1.9446820466422992
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 20,
+      "scale": {
+        "x": 1,
+        "y": 1
+      },
+      "rotation": 0,
+      "alpha": 1
+    },
+    {
+      "id": "rightEyebrow",
+      "parent": "head",
+      "asset": "assets/eyebrow-right.png",
+      "position": {
+        "x": 55.95050740979377,
+        "y": -6.71910358685534
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 20,
+      "scale": {
+        "x": 1,
+        "y": 1
+      },
+      "rotation": 0,
+      "alpha": 1
+    },
+    {
+      "id": "mouth",
+      "parent": "head",
+      "asset": "assets/mouth-neutral.png",
+      "position": {
+        "x": -1.055653994845386,
+        "y": 146.56737661144552
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 20,
+      "scale": {
+        "x": 1,
+        "y": 1
+      },
+      "rotation": 0,
+      "alpha": 1
+    },
+    {
+      "id": "leftBlush",
+      "parent": "head",
+      "asset": "assets/blush-left.png",
+      "position": {
+        "x": -104.51131604381442,
+        "y": 106.66536824868126
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 15,
+      "alpha": 0.25,
+      "scale": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "rightBlush",
+      "parent": "head",
+      "asset": "assets/blush-right.png",
+      "position": {
+        "x": 108.73401256443299,
+        "y": 90.86453470546331
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "zIndex": 15,
+      "alpha": 0.25,
+      "scale": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "rotation": 0
+    }
+  ]
+}
