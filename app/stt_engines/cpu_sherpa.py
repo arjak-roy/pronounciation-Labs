@@ -11,6 +11,27 @@ from app.stt_engines import STT_LANG_MAP, BaseSTTEngine, StreamingSTTSession
 
 logger = logging.getLogger("voice_pronunciation_engine.mode_a_sherpa")
 
+# Native-script initial prompts anchor Whisper's BPE decoder into the right Unicode script
+# (especially critical for Bengali, Hindi, and other Indic/non-Latin scripts on whisper-small)
+WHISPER_SCRIPT_PROMPTS: dict[str, str] = {
+    "bn": "বাংলা ভাষায় স্পষ্ট কথোপকথন। নমস্কার, আপনি কেমন আছেন? আমি বাংলায় কথা বলতে ভালোবাসি। ধন্যবাদ।",
+    "hi": "हिंदी में स्पष्ट बातचीत। नमस्ते, आप कैसे हैं? धन्यवाद।",
+    "ta": "வணக்கம், நீங்கள் எப்படி இருக்கிறீர்கள்? நன்றி.",
+    "te": "నమస్కారం, మీరు ఎలా ఉన్నారు? ధన్యవాదాలు.",
+    "mr": "नमस्कार, तुम्ही कसे आहात? धन्यवाद.",
+    "gu": "નમસ્તે, તમે કેમ છો? આભાર.",
+    "ur": "السلام علیکم، آپ کیسے ہیں؟ شکریہ۔",
+    "ar": "مرحباً، كيف حالك اليوم؟ شكراً جزيلاً.",
+    "de": "Guten Morgen, wie geht es Ihnen? Ich freue mich auf unsere Zusammenarbeit.",
+    "en": "Hello, how are you doing today? Let's practice clear pronunciation.",
+    "es": "Hola, buenos días, ¿cómo estás hoy? Muchas gracias.",
+    "fr": "Bonjour, comment allez-vous aujourd'hui ? Merci beaucoup.",
+}
+
+INDIC_AND_MULTIBYTE_LANGS = frozenset(
+    {"bn", "hi", "ta", "te", "mr", "gu", "ur", "ar", "ja", "zh", "ko", "ru", "el"}
+)
+
 
 class SherpaStreamingSession(StreamingSTTSession):
     """
@@ -206,30 +227,36 @@ class SherpaCpuEngine(BaseSTTEngine):
 
         if self._whisper is not None:
             iso_lang = STT_LANG_MAP.get(language.lower(), "de")
+            is_multibyte = iso_lang in INDIC_AND_MULTIBYTE_LANGS
             use_silero_vad = waveform_1d.size >= 8000
+            script_prompt = WHISPER_SCRIPT_PROMPTS.get(iso_lang)
+            # Note: 3-byte UTF-8 scripts (Bengali, Hindi, etc.) naturally have zlib compression
+            # ratios of 2.6-3.6 due to shared \xe0\xa6 UTF-8 prefix bytes, so compression_ratio_threshold
+            # must be >= 3.8 for multibyte scripts to avoid false rejection!
             segments, _ = self._whisper.transcribe(
                 waveform_1d,
                 language=iso_lang,
-                beam_size=1,
-                best_of=1,
+                initial_prompt=script_prompt,
+                beam_size=3 if is_multibyte else 1,
+                best_of=3 if is_multibyte else 1,
                 temperature=0.0,
                 condition_on_previous_text=False,
                 vad_filter=use_silero_vad,
                 vad_parameters=dict(
-                    threshold=0.42,
+                    threshold=0.40,
                     min_speech_duration_ms=110,
                     min_silence_duration_ms=250,
-                    speech_pad_ms=90,
+                    speech_pad_ms=110,
                 ),
-                no_speech_threshold=0.55,
-                log_prob_threshold=-1.0,
-                compression_ratio_threshold=2.2,
+                no_speech_threshold=0.60,
+                log_prob_threshold=-1.2 if is_multibyte else -1.0,
+                compression_ratio_threshold=4.0 if is_multibyte else 2.4,
                 without_timestamps=True,
             )
             texts: list[str] = []
             probs: list[float] = []
             for seg in segments:
-                if getattr(seg, "no_speech_prob", 0.0) > 0.68:
+                if getattr(seg, "no_speech_prob", 0.0) > 0.72:
                     continue
                 t = seg.text.strip()
                 if t:

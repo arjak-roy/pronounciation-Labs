@@ -1187,11 +1187,30 @@ export default function App() {
     lang: string,
     pass1Draft: string
   ) => {
-    if (utteranceSamples16k.length < 2400) return; // < 150ms ignore
+    const cleanDraft = pass1Draft.trim();
+    const cleanLang = lang === 'all' ? 'de' : lang;
+    // For low-resource Whisper scripts (like Bengali/Indic) where Pass-1 native browser ASR
+    // already captured a clean script transcript, lock in Pass-1 immediately and only use
+    // Whisper Pass-2 when Pass-1 is empty or when Whisper has high confidence (>= 0.80).
+    const preferPass1ForScript = ['bn', 'ta', 'te', 'mr', 'gu', 'ur', 'hi'].includes(cleanLang);
+    if (preferPass1ForScript && cleanDraft.length > 1) {
+      setLiveSttFinalList((prev) => [...prev, cleanDraft]);
+      setLiveSttInterim('');
+      setLiveSttConfidence(0.94);
+      return;
+    }
+
+    if (utteranceSamples16k.length < 2400) {
+      if (cleanDraft) {
+        setLiveSttFinalList((prev) => [...prev, cleanDraft]);
+        setLiveSttInterim('');
+      }
+      return;
+    }
+
     setIsPass2Verifying(true);
     try {
       const wavBlob = encodeMono16kWav(utteranceSamples16k, 16000);
-      const cleanLang = lang === 'all' ? 'de' : lang;
       const fd = new FormData();
       fd.append('audio', wavBlob, 'utterance_16k.wav');
       fd.append('language', cleanLang);
@@ -1219,7 +1238,7 @@ export default function App() {
             : typeof data.stt_confidence === 'number'
             ? data.stt_confidence
             : 0.92;
-        if (whisperText) {
+        if (whisperText && (!cleanDraft || conf >= 0.65)) {
           setLiveSttFinalList((prev) => [...prev, whisperText]);
           setLiveSttInterim('');
           setLiveSttConfidence(conf);
@@ -1227,10 +1246,11 @@ export default function App() {
         }
       }
     } catch {}
-    // Fallback if offline: commit Pass-1 draft if present
-    if (pass1Draft.trim()) {
-      setLiveSttFinalList((prev) => [...prev, pass1Draft.trim()]);
+    // Fallback: commit Pass-1 draft if present
+    if (cleanDraft) {
+      setLiveSttFinalList((prev) => [...prev, cleanDraft]);
       setLiveSttInterim('');
+      setLiveSttConfidence(0.9);
     }
     setIsPass2Verifying(false);
   };
@@ -1429,11 +1449,20 @@ export default function App() {
     }
 
     if (andScorePronunciation) {
+      const existingTranscript = [...liveSttFinalList, liveSttInterim].join(' ').trim();
+      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      // If we already have a verified transcript from Pass 1 / Pass 2, score directly against it
+      // via Mode B (/api/v1/pronunciation/assess) so Wav2Vec2 + espeak-ng scores the exact words spoken!
+      if (existingTranscript) {
+        setReferenceText(existingTranscript);
+        await submitAudioForAssessment(wavBlob, 'free_speech_16k.wav');
+        return;
+      }
+
       setIsAnalyzing(true);
       setErrorMsg(null);
       const t0 = performance.now();
       try {
-        const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
         const fd = new FormData();
         fd.append('audio', wavBlob, 'free_speech_16k.wav');
         fd.append('language', cleanLang);
