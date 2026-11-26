@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   Settings,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Sun,
@@ -247,6 +248,7 @@ export default function App() {
   const [apiTarget, setApiTarget] = useState<ApiTarget>('aws');
   const [serverOnline, setServerOnline] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
+  const [showFilterModal, setShowFilterModal] = useState<boolean>(false);
   const [autoStopVad, setAutoStopVad] = useState<boolean>(true);
   const [soundEffectsOn, setSoundEffectsOn] = useState<boolean>(true);
 
@@ -271,15 +273,15 @@ export default function App() {
   const [libraryStats, setLibraryStats] = useState<LibraryStats | null>(null);
   const [usingServerDb, setUsingServerDb] = useState<boolean>(false);
 
-  // --- Practice Filters & Active Item ---
-  const [selectedLang, setSelectedLang] = useState<string>('en');
+  // --- Practice Filters & Active Item (Default: German 'de') ---
+  const [selectedLang, setSelectedLang] = useState<string>('de');
   const [filterType, setFilterType] = useState<'all' | 'word' | 'phrase'>('all');
   const [filterDifficulty, setFilterDifficulty] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  const [activeItemId, setActiveItemId] = useState<number>(9); // Default: "She can see the sea"
-  const [referenceText, setReferenceText] = useState<string>('She can see the sea');
+  const [activeItemId, setActiveItemId] = useState<number>(47); // Default German: "Guten Morgen, wie geht es Ihnen"
+  const [referenceText, setReferenceText] = useState<string>('Guten Morgen, wie geht es Ihnen');
   const [speechSpeed, setSpeechSpeed] = useState<number>(1.0);
 
   // --- Add / Edit Word or Phrase Modal State ---
@@ -287,7 +289,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [formText, setFormText] = useState<string>('');
   const [formType, setFormType] = useState<'word' | 'phrase'>('phrase');
-  const [formLang, setFormLang] = useState<string>('en');
+  const [formLang, setFormLang] = useState<string>('de');
   const [formDifficulty, setFormDifficulty] = useState<'Beginner' | 'Intermediate' | 'Advanced'>('Beginner');
   const [formCategory, setFormCategory] = useState<string>('Daily Essentials');
   const [formFocusPhoneme, setFormFocusPhoneme] = useState<string>('');
@@ -1108,179 +1110,286 @@ export default function App() {
     score >= 90 ? 3 : score >= 75 ? 2 : score >= 55 ? 1 : 0;
 
   return (
-    <div className="tv-app-shell">
+    <>
       {/* =====================================================================
-          1. CLEAN LEARNER HEADER WITH 3 PRIMARY NAVIGATION TABS
+          1. COMPACT STICKY TOP APP BAR & ZERO-OVERFLOW TAB RIBBON
          ===================================================================== */}
-      <GameCard style={{ marginBottom: 16, padding: '12px 16px' }}>
-        <div className="tv-header-row">
-          {/* Brand */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <IconTile tone="navy" size={44}>
-              <Mic size={22} />
+      <header
+        className="tv-sticky-appbar"
+        style={{
+          background: isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.94)',
+        }}
+      >
+        <div className="tv-appbar-inner">
+          {/* Compact Brand */}
+          <div className="tv-brand-compact">
+            <IconTile tone="navy" size={34} depth={3}>
+              <Mic size={17} />
             </IconTile>
-            <div>
-              <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: '-0.02em' }}>
-                TransitVox
-              </div>
-              <div style={{ fontSize: 12, color: c.muted, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontWeight: 900,
+                  fontSize: 16,
+                  letterSpacing: '-0.02em',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span>TransitVox</span>
                 <span
+                  title={serverOnline ? 'Connected to Speech Engine' : 'Connecting...'}
                   style={{
-                    width: 8,
-                    height: 8,
+                    width: 7,
+                    height: 7,
                     borderRadius: 99,
                     backgroundColor: serverOnline ? '#16A34A' : '#F59E0B',
                     display: 'inline-block',
                   }}
                 />
-                <span>
-                  {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.flag || '🌐'}{' '}
-                  {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'All Languages'} · Voice & Pronunciation Coach
-                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: 10.5,
+                  color: c.muted,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.flag || '🇩🇪'}{' '}
+                {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'}
               </div>
             </div>
           </div>
 
-          {/* 3 Primary Learner Navigation Tabs */}
-          <div className="tv-nav-tabs">
-            <ChunkyButton
-              tone={activeTab === 'practice' ? 'navy' : 'soft'}
-              size="sm"
+          {/* Zero-Overflow 3-Tab Segmented Ribbon */}
+          <nav
+            className="tv-tab-ribbon"
+            style={{
+              background: isDark ? '#1E293B' : '#EEF2F6',
+              border: `1px solid ${c.border}`,
+            }}
+          >
+            <button
+              type="button"
+              className="tv-tab-btn"
               onClick={() => setActiveTab('practice')}
+              style={{
+                background:
+                  activeTab === 'practice' ? (isDark ? '#2F5FC4' : '#0D3B84') : 'transparent',
+                color: activeTab === 'practice' ? '#FFFFFF' : c.text,
+              }}
             >
-              <Target size={15} /> Practice
-            </ChunkyButton>
-            <ChunkyButton
-              tone={activeTab === 'library' ? 'navy' : 'soft'}
-              size="sm"
+              <Target size={14} style={{ flexShrink: 0 }} />
+              <span>Practice</span>
+            </button>
+            <button
+              type="button"
+              className="tv-tab-btn"
               onClick={() => setActiveTab('library')}
+              style={{
+                background:
+                  activeTab === 'library' ? (isDark ? '#2F5FC4' : '#0D3B84') : 'transparent',
+                color: activeTab === 'library' ? '#FFFFFF' : c.text,
+              }}
             >
-              <BookOpen size={15} /> Library ({libraryItems.length})
-            </ChunkyButton>
-            <ChunkyButton
-              tone={activeTab === 'progress' ? 'navy' : 'soft'}
-              size="sm"
+              <BookOpen size={14} style={{ flexShrink: 0 }} />
+              <span>Library ({filteredItems.length})</span>
+            </button>
+            <button
+              type="button"
+              className="tv-tab-btn"
               onClick={() => setActiveTab('progress')}
+              style={{
+                background:
+                  activeTab === 'progress' ? (isDark ? '#2F5FC4' : '#0D3B84') : 'transparent',
+                color: activeTab === 'progress' ? '#FFFFFF' : c.text,
+              }}
             >
-              <TrendingUp size={15} /> Progress
-            </ChunkyButton>
-          </div>
+              <TrendingUp size={14} style={{ flexShrink: 0 }} />
+              <span>Progress</span>
+            </button>
+          </nav>
 
-          {/* Right HUD: Streak, Stars & Settings Gear */}
-          <div className="tv-hud-pills">
+          {/* Compact Right HUD: Streak + Settings */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             <Pill tone="orange">
-              <Flame size={13} /> {streak} Streak
+              <Flame size={12} /> {streak}
             </Pill>
-            <span className="tv-mastered-pill">
-              <Pill tone="blue">
-                <Award size={13} /> {masteredCount} Mastered
-              </Pill>
-            </span>
-            <ChunkyButton
-              tone="soft"
-              size="sm"
+            <button
+              type="button"
               onClick={() => setShowSettingsModal(true)}
               title="Audio & Connection Settings"
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                border: `1.5px solid ${c.border}`,
+                background: c.surface,
+                color: c.text,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+              }}
             >
-              <Settings size={15} />
-            </ChunkyButton>
+              <Settings size={16} />
+            </button>
           </div>
         </div>
-      </GameCard>
+      </header>
 
-      {/* =====================================================================
-          TAB 1: PRACTICE STUDIO (USER-CENTRIC PRONUNCIATION WORKSPACE)
-         ===================================================================== */}
-      {activeTab === 'practice' && (
-        <>
-          {/* A. Simple Filter & Curriculum Strip */}
-          <GameCard style={{ marginBottom: 16, padding: '12px 16px' }}>
-            <div className="tv-filter-top-row">
-              {/* Language & Mode Filters */}
-              <div className="tv-filter-controls">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Globe size={15} color={c.muted} />
-                  <select
-                    value={selectedLang}
-                    onChange={(e) => {
-                      const newLang = e.target.value;
-                      setSelectedLang(newLang);
-                      const firstForLang = libraryItems.find((i) => i.language === newLang);
-                      if (firstForLang) selectLibraryItemForPractice(firstForLang);
-                    }}
-                    style={{
-                      padding: '6px 10px',
-                      borderRadius: 10,
-                      border: `1.5px solid ${c.border}`,
-                      background: c.surface,
-                      color: c.text,
-                      fontWeight: 700,
-                      fontSize: 13,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {LANGUAGE_OPTIONS.map((l) => (
-                      <option key={l.code} value={l.code}>
-                        {l.flag} {l.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+      <div className="tv-app-shell">
+        {/* =====================================================================
+            TAB 1: PRACTICE STUDIO (USER-CENTRIC PRONUNCIATION WORKSPACE)
+           ===================================================================== */}
+        {activeTab === 'practice' && (
+          <>
+            {/* A. Filter & Curriculum Strip (Desktop Inline vs Mobile Popup Trigger) */}
+            <GameCard innerStyle={{ padding: '10px 12px' }} style={{ marginBottom: 12 }}>
+              {/* Mobile Compact Filter Trigger Row (<768px) */}
+              <div className="tv-mobile-filter-bar">
+                <button
+                  type="button"
+                  onClick={() => setShowFilterModal(true)}
+                  style={{
+                    flex: 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    padding: '7px 11px',
+                    borderRadius: 10,
+                    border: `1.5px solid ${c.border}`,
+                    background: c.surface,
+                    color: c.text,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <SlidersHorizontal size={14} color="#0D3B84" />
+                    <span>
+                      {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.flag || '🇩🇪'}{' '}
+                      {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'} ·{' '}
+                      {filterType === 'all' ? 'All' : filterType === 'word' ? 'Words' : 'Phrases'} ·{' '}
+                      {filterDifficulty === 'all' ? 'All Levels' : filterDifficulty}
+                    </span>
+                  </span>
+                  <Pill tone="navy">{filteredItems.length}</Pill>
+                </button>
 
-                {/* Word vs Phrase Mode Filter */}
-                {(['all', 'word', 'phrase'] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setFilterType(t)}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: 999,
-                      border: `1.5px solid ${filterType === t ? '#0D3B84' : c.border}`,
-                      background:
-                        filterType === t ? (isDark ? '#2F5FC4' : '#0D3B84') : 'transparent',
-                      color: filterType === t ? '#FFFFFF' : c.text,
-                      fontWeight: 700,
-                      fontSize: 12,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {t === 'all' ? 'All Items' : t === 'word' ? '🔤 Single Words' : '💬 Phrases'}
-                  </button>
-                ))}
-
-                {/* Difficulty Filter */}
-                {(['all', 'Beginner', 'Intermediate', 'Advanced'] as const).map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => setFilterDifficulty(d)}
-                    style={{
-                      padding: '5px 10px',
-                      borderRadius: 999,
-                      border: `1px solid ${filterDifficulty === d ? '#F89A1C' : c.border}`,
-                      background:
-                        filterDifficulty === d ? 'rgba(248,154,28,0.18)' : 'transparent',
-                      color: filterDifficulty === d ? '#F89A1C' : c.muted,
-                      fontWeight: 700,
-                      fontSize: 12,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {d === 'all' ? 'All Levels' : d}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() => openCreateModal(filterType === 'word' ? 'word' : 'phrase')}
+                  style={{
+                    padding: '7px 11px',
+                    borderRadius: 10,
+                    border: 'none',
+                    background: '#F89A1C',
+                    color: '#1F1300',
+                    fontWeight: 900,
+                    fontSize: 12,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  <Plus size={14} /> Add
+                </button>
               </div>
 
-              {/* Add Custom Word/Phrase Button */}
-              <ChunkyButton
-                tone="orange"
-                size="sm"
-                onClick={() => openCreateModal(filterType === 'word' ? 'word' : 'phrase')}
-              >
-                <Plus size={15} /> Add Word or Phrase
-              </ChunkyButton>
-            </div>
+              {/* Desktop Full Filter Row (>768px) */}
+              <div className="tv-desktop-filters">
+                <div className="tv-filter-controls">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Globe size={15} color={c.muted} />
+                    <select
+                      value={selectedLang}
+                      onChange={(e) => {
+                        const newLang = e.target.value;
+                        setSelectedLang(newLang);
+                        const firstForLang = libraryItems.find((i) => i.language === newLang);
+                        if (firstForLang) selectLibraryItemForPractice(firstForLang);
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        borderRadius: 10,
+                        border: `1.5px solid ${c.border}`,
+                        background: c.surface,
+                        color: c.text,
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {LANGUAGE_OPTIONS.map((l) => (
+                        <option key={l.code} value={l.code}>
+                          {l.flag} {l.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Word vs Phrase Mode Filter */}
+                  {(['all', 'word', 'phrase'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setFilterType(t)}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: 999,
+                        border: `1.5px solid ${filterType === t ? '#0D3B84' : c.border}`,
+                        background:
+                          filterType === t ? (isDark ? '#2F5FC4' : '#0D3B84') : 'transparent',
+                        color: filterType === t ? '#FFFFFF' : c.text,
+                        fontWeight: 700,
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {t === 'all' ? 'All Items' : t === 'word' ? '🔤 Single Words' : '💬 Phrases'}
+                    </button>
+                  ))}
+
+                  {/* Difficulty Filter */}
+                  {(['all', 'Beginner', 'Intermediate', 'Advanced'] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setFilterDifficulty(d)}
+                      style={{
+                        padding: '5px 10px',
+                        borderRadius: 999,
+                        border: `1px solid ${filterDifficulty === d ? '#F89A1C' : c.border}`,
+                        background:
+                          filterDifficulty === d ? 'rgba(248,154,28,0.18)' : 'transparent',
+                        color: filterDifficulty === d ? '#F89A1C' : c.muted,
+                        fontWeight: 700,
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {d === 'all' ? 'All Levels' : d}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Add Custom Word/Phrase Button */}
+                <ChunkyButton
+                  tone="orange"
+                  size="sm"
+                  onClick={() => openCreateModal(filterType === 'word' ? 'word' : 'phrase')}
+                >
+                  <Plus size={15} /> Add Word or Phrase
+                </ChunkyButton>
+              </div>
 
             {/* Horizontal Swipeable Cards from the DB */}
             <div className="tv-deck-strip">
@@ -2620,41 +2729,95 @@ export default function App() {
                   >
                     <div
                       style={{
-                        fontSize: 11,
-                        fontWeight: 900,
-                        textTransform: 'uppercase',
-                        letterSpacing: 0.4,
-                        color: '#0D3B84',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: 6,
                       }}
                     >
-                      📋 Quick Coach Summary
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 900,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.4,
+                          color: '#0D3B84',
+                        }}
+                      >
+                        📋 Quick Coach Summary
+                      </span>
+                      <span style={{ fontSize: 10.5, color: c.muted, fontWeight: 700 }}>
+                        {isPlayingMyVoice
+                          ? '🔊 Playing your voice...'
+                          : '👆 Tap any word to hear your recording'}
+                      </span>
                     </div>
 
-                    {/* Word-by-Word Colored Mini Strip */}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                    {/* Interactive Word-by-Word Playback Strip with Live Speaking Animation */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 7,
+                        alignItems: 'center',
+                        padding: '6px 0 2px',
+                      }}
+                    >
                       {words.map((w, idx) => {
                         const ok = w.status === 'correct';
                         const warn = w.status === 'warning';
-                        const bg = ok
+                        const isWordPlaying = speakingWordIdx === idx;
+                        const bg = isWordPlaying
+                          ? '#F89A1C'
+                          : ok
                           ? 'rgba(22,163,74,0.14)'
                           : warn
                           ? 'rgba(217,119,6,0.15)'
                           : 'rgba(220,38,38,0.15)';
-                        const fg = ok ? '#16A34A' : warn ? '#D97706' : '#DC2626';
+                        const fg = isWordPlaying
+                          ? '#1F1300'
+                          : ok
+                          ? '#16A34A'
+                          : warn
+                          ? '#D97706'
+                          : '#DC2626';
                         return (
-                          <span
+                          <button
                             key={idx}
+                            type="button"
+                            className={isWordPlaying ? 'tv-speaking-word-Active' : undefined}
+                            onClick={() => playSelectedWordSlice(w, idx)}
+                            title={`Tap to hear your recording of "${w.word}"`}
                             style={{
-                              padding: '3px 9px',
+                              padding: '5px 11px',
                               borderRadius: 999,
+                              border: isWordPlaying
+                                ? '2px solid #B86E0B'
+                                : `1.5px solid ${fg}44`,
                               background: bg,
                               color: fg,
-                              fontWeight: 800,
-                              fontSize: 12,
+                              fontWeight: 900,
+                              fontSize: 12.5,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              transition: 'all 0.15s ease',
                             }}
                           >
-                            {w.word} {typeof w.score === 'number' ? `${w.score}%` : ''}
-                          </span>
+                            {isWordPlaying && (
+                              <span className="tv-eq-bars">
+                                <span />
+                                <span />
+                                <span />
+                              </span>
+                            )}
+                            <span>{w.word}</span>
+                            {typeof w.score === 'number' && (
+                              <span style={{ opacity: 0.85, fontSize: 11 }}>{w.score}%</span>
+                            )}
+                          </button>
                         );
                       })}
                     </div>
@@ -3048,6 +3211,178 @@ export default function App() {
           </div>
         </div>
       )}
-    </div>
+
+      {/* =====================================================================
+          MODAL 4: MOBILE PRACTICE FILTER POPUP
+         ===================================================================== */}
+      {showFilterModal && (
+        <div
+          className="tv-modal-backdrop"
+          onClick={() => setShowFilterModal(false)}
+        >
+          <div
+            className="tv-modal-scroll-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 420 }}
+          >
+            <GameCard innerStyle={{ padding: '18px 20px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 14,
+                }}
+              >
+                <div style={{ fontSize: 18, fontWeight: 900, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <SlidersHorizontal size={18} color="#0D3B84" /> Filter Practice Deck
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFilterModal(false)}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: c.muted,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {/* Language */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 800, display: 'block', marginBottom: 6 }}>
+                    Language
+                  </label>
+                  <select
+                    value={selectedLang}
+                    onChange={(e) => {
+                      const newLang = e.target.value;
+                      setSelectedLang(newLang);
+                      const firstForLang = libraryItems.find((i) => i.language === newLang);
+                      if (firstForLang) selectLibraryItemForPractice(firstForLang);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      borderRadius: 10,
+                      border: `1.5px solid ${c.border}`,
+                      background: c.surface,
+                      color: c.text,
+                      fontWeight: 800,
+                      fontSize: 13.5,
+                    }}
+                  >
+                    {LANGUAGE_OPTIONS.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.flag} {l.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Practice Mode (Words vs Phrases) */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 800, display: 'block', marginBottom: 6 }}>
+                    Practice Mode
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                    {(['all', 'word', 'phrase'] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setFilterType(t)}
+                        style={{
+                          padding: '8px 6px',
+                          borderRadius: 10,
+                          border: `1.5px solid ${filterType === t ? '#0D3B84' : c.border}`,
+                          background:
+                            filterType === t ? (isDark ? '#2F5FC4' : '#0D3B84') : c.surface,
+                          color: filterType === t ? '#FFFFFF' : c.text,
+                          fontWeight: 800,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {t === 'all' ? 'All' : t === 'word' ? '🔤 Words' : '💬 Phrases'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Difficulty Level */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 800, display: 'block', marginBottom: 6 }}>
+                    Difficulty Level
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    {(['all', 'Beginner', 'Intermediate', 'Advanced'] as const).map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setFilterDifficulty(d)}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 10,
+                          border: `1.5px solid ${filterDifficulty === d ? '#F89A1C' : c.border}`,
+                          background:
+                            filterDifficulty === d ? 'rgba(248,154,28,0.18)' : c.surface,
+                          color: filterDifficulty === d ? '#F89A1C' : c.text,
+                          fontWeight: 800,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {d === 'all' ? 'All Levels' : d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Category */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 800, display: 'block', marginBottom: 6 }}>
+                    Topic Category
+                  </label>
+                  <select
+                    value={filterCategory}
+                    onChange={(e) => setFilterCategory(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      borderRadius: 10,
+                      border: `1.5px solid ${c.border}`,
+                      background: c.surface,
+                      color: c.text,
+                      fontWeight: 700,
+                      fontSize: 13,
+                    }}
+                  >
+                    <option value="all">All Categories</option>
+                    {CATEGORY_OPTIONS.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <ChunkyButton
+                  tone="navy"
+                  fullWidth
+                  onClick={() => setShowFilterModal(false)}
+                >
+                  Show {filteredItems.length} Matching Items
+                </ChunkyButton>
+              </div>
+            </GameCard>
+          </div>
+        </div>
+      )}
+      </div>
+    </>
   );
 }
