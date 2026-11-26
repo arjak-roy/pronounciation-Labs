@@ -197,8 +197,12 @@ class ForcedAlignerGOP:
             return "Mouth & tongue placement matched naturally."
 
         try:
-            exp_seg = self._panphon_dst.fm.fts(expected_p)
-            hrd_seg = self._panphon_dst.fm.fts(heard_p)
+            exp_seg = self._panphon_dst.fm.fts(expected_p) or (
+                self._panphon_dst.fm.fts(expected_p[0]) if expected_p else None
+            )
+            hrd_seg = self._panphon_dst.fm.fts(heard_p) or (
+                self._panphon_dst.fm.fts(heard_p[0]) if heard_p else None
+            )
         except Exception:
             exp_seg = None
             hrd_seg = None
@@ -206,8 +210,8 @@ class ForcedAlignerGOP:
         if exp_seg is None or hrd_seg is None:
             return f"Produced /{heard_p}/ instead of target /{expected_p}/ — isolate /{expected_p}/ slowly."
 
-        exp_d = exp_seg.data
-        hrd_d = hrd_seg.data
+        exp_d = exp_seg if isinstance(exp_seg, dict) else getattr(exp_seg, "data", {})
+        hrd_d = hrd_seg if isinstance(hrd_seg, dict) else getattr(hrd_seg, "data", {})
         cues: list[str] = []
 
         # 1. Manner of articulation (Continuant: stop vs fricative)
