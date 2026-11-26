@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import espeakng_loader
 from phonemizer.backend import EspeakBackend
 from phonemizer.backend.espeak.wrapper import EspeakWrapper
 from phonemizer.separator import Separator
+
+IPA_VOWEL_CHARS = frozenset("aeiouɑɒæɛɪɔʊʌəɐɜɝɚɨʉɵyøœɶɯɤ")
 
 # Suprasegmentals, stress marks, length marks, and tie bars to sanitize before tokenizer lookup
 SUPRASEGMENTAL_STRIP_CHARS = frozenset(
@@ -70,6 +73,15 @@ _WORD_TOKEN_RE = re.compile(r"[^\w\s'-]+", flags=re.UNICODE)
 
 
 @dataclass(frozen=True)
+class SyllableTarget:
+    """Syllable stress and phoneme index range within a WordPhonemeTarget."""
+
+    ipa: str
+    stress: Literal["primary", "secondary", "unstressed"]
+    phoneme_indices: list[int]
+
+
+@dataclass(frozen=True)
 class WordPhonemeTarget:
     """Expected phoneme breakdown and strictly validated Wav2Vec2 token IDs for a reference word."""
 
@@ -78,6 +90,7 @@ class WordPhonemeTarget:
     sanitized_ipa: str
     phonemes: list[str]
     token_ids: list[int]
+    syllables: list[SyllableTarget] = field(default_factory=list)
 
 
 def configure_espeak_environment(
@@ -164,10 +177,99 @@ class G2PService:
             self._backends[espeak_lang] = EspeakBackend(
                 language=espeak_lang,
                 preserve_punctuation=False,
-                with_stress=False,
+                with_stress=True,
                 tie=False,
             )
         return self._backends[espeak_lang]
+
+    @staticmethod
+    def _is_vowel_phoneme(phoneme: str) -> bool:
+        return any(ch in IPA_VOWEL_CHARS for ch in phoneme)
+
+    def segment_syllables_with_stress(
+        self,
+        raw_ipa: str,
+        phonemes: list[str],
+    ) -> list[SyllableTarget]:
+        """
+        Group a word's phonemes into syllables around vowel nuclei and assign
+        `primary` (`ˈ`), `secondary` (`ˌ`), or `unstressed` labels from `espeak-ng` output.
+        """
+        if not phonemes:
+            return []
+
+        vowel_indices = [i for i, p in enumerate(phonemes) if self._is_vowel_phoneme(p)]
+        if len(vowel_indices) <= 1:
+            stress: Literal["primary", "secondary", "unstressed"] = (
+                "primary" if "ˈ" in raw_ipa else ("secondary" if "ˌ" in raw_ipa else "primary")
+            )
+            return [
+                SyllableTarget(
+                    ipa="".join(phonemes),
+                    stress=stress,
+                    phoneme_indices=list(range(len(phonemes))),
+                )
+            ]
+
+        # Determine stress rank of each vowel nucleus by scanning raw_ipa in order
+        compact_raw = raw_ipa.replace(" ", "")
+        stress_markers_by_vowel: list[Literal["primary", "secondary", "unstressed"]] = []
+        pending_stress: Literal["primary", "secondary", "unstressed"] = "unstressed"
+        in_vowel_run = False
+
+        for ch in compact_raw:
+            if ch == "ˈ":
+                pending_stress = "primary"
+                in_vowel_run = False
+            elif ch == "ˌ":
+                if pending_stress != "primary":
+                    pending_stress = "secondary"
+                in_vowel_run = False
+            elif ch in IPA_VOWEL_CHARS:
+                if not in_vowel_run:
+                    stress_markers_by_vowel.append(pending_stress)
+                    pending_stress = "unstressed"
+                    in_vowel_run = True
+            elif ch != "ː":
+                in_vowel_run = False
+
+        while len(stress_markers_by_vowel) < len(vowel_indices):
+            stress_markers_by_vowel.append("unstressed")
+
+        if "primary" not in stress_markers_by_vowel:
+            stress_markers_by_vowel[0] = "primary"
+
+        # Partition phoneme indices into syllables around vowel_indices
+        syllables: list[SyllableTarget] = []
+        num_vowels = len(vowel_indices)
+        start_p = 0
+
+        for s_idx, v_idx in enumerate(vowel_indices):
+            if s_idx == num_vowels - 1:
+                end_p = len(phonemes)
+            else:
+                next_v = vowel_indices[s_idx + 1]
+                # Split intervocalic consonants so at least 1 onset consonant goes to next syllable
+                consonant_count = next_v - v_idx - 1
+                if consonant_count <= 0:
+                    end_p = v_idx + 1
+                elif consonant_count == 1:
+                    end_p = v_idx + 1
+                else:
+                    end_p = next_v - 1
+
+            p_indices = list(range(start_p, end_p))
+            syl_ipa = "".join(phonemes[i] for i in p_indices)
+            syllables.append(
+                SyllableTarget(
+                    ipa=syl_ipa,
+                    stress=stress_markers_by_vowel[s_idx],
+                    phoneme_indices=p_indices,
+                )
+            )
+            start_p = end_p
+
+        return syllables
 
     def sanitize_ipa(self, raw_ipa: str) -> str:
         """
@@ -277,6 +379,7 @@ class G2PService:
                 # Fallback if word produced no phonemes (e.g. digits/symbols): phonemize character by character
                 phonemes, token_ids = self.map_ipa_to_vocab_tokens("ə")
             sanitized_ipa = "".join(phonemes)
+            syllables = self.segment_syllables_with_stress(raw_ipa, phonemes)
             results.append(
                 WordPhonemeTarget(
                     word=word,
@@ -284,6 +387,7 @@ class G2PService:
                     sanitized_ipa=sanitized_ipa,
                     phonemes=phonemes,
                     token_ids=token_ids,
+                    syllables=syllables,
                 )
             )
         return results

@@ -13,7 +13,12 @@ import torch
 import torchaudio.functional as F_audio
 
 from app.g2p import WordPhonemeTarget
-from app.schemas import PhonemeAssessment, WordAssessment
+from app.schemas import (
+    PhonemeAssessment,
+    SyllableStressItem,
+    WordAssessment,
+    WordStressDiagnostic,
+)
 
 # Native allophone & dialectal equivalence sets (e.g., US/UK vowel mergers, American alveolar flap,
 # unstressed schwa variants). Crucially, distinct learner error pairs (/θ/ vs /t,s/, /ʃ/ vs /s/,
@@ -181,6 +186,199 @@ class ForcedAlignerGOP:
 
         self._articulatory_cache[key] = cost
         return cost
+
+    def describe_articulatory_diff(self, expected_p: str, heard_p: str) -> str:
+        """
+        Inspect panphon's 24 articulatory features (`voi`, `cont`, `cor`, `ant`, `distr`,
+        `lab`, `hi`, `lo`, `back`, `round`, `tense`, `nas`, `lat`) for `expected_p` vs `heard_p`
+        and return a clear, learner-friendly physical mouth/tongue instruction.
+        """
+        if self.is_acceptable_allophone(expected_p, heard_p):
+            return "Mouth & tongue placement matched naturally."
+
+        try:
+            exp_seg = self._panphon_dst.fm.fts(expected_p)
+            hrd_seg = self._panphon_dst.fm.fts(heard_p)
+        except Exception:
+            exp_seg = None
+            hrd_seg = None
+
+        if exp_seg is None or hrd_seg is None:
+            return f"Produced /{heard_p}/ instead of target /{expected_p}/ — isolate /{expected_p}/ slowly."
+
+        exp_d = exp_seg.data
+        hrd_d = hrd_seg.data
+        cues: list[str] = []
+
+        # 1. Manner of articulation (Continuant: stop vs fricative)
+        if exp_d.get("cont", 0) == 1 and hrd_d.get("cont", 0) == -1:
+            cues.append(
+                f"Airflow was blocked completely (/{heard_p}/ stop); keep a narrow gap so air flows continuously for /{expected_p}/"
+            )
+        elif exp_d.get("cont", 0) == -1 and hrd_d.get("cont", 0) == 1:
+            cues.append(
+                f"Air leaked continuously (/{heard_p}/ fricative); make a crisp complete seal then release for /{expected_p}/"
+            )
+
+        # 2. Place of articulation (Dental/Distributed vs Alveolar, Labial, Palatal)
+        if expected_p in ("θ", "ð") and heard_p in ("t", "d", "s", "z"):
+            cues.append(
+                "Move your tongue tip slightly forward so it rests lightly between your upper and lower front teeth"
+            )
+        elif expected_p in ("ʃ", "ʒ") and heard_p in ("s", "z"):
+            cues.append(
+                "Pull your tongue tip slightly back toward the roof of your mouth and round your lips slightly ('shh')"
+            )
+        elif expected_p in ("s", "z") and heard_p in ("ʃ", "ʒ", "θ", "t"):
+            cues.append(
+                "Keep your tongue tip just behind your upper front teeth (without touching between teeth) for a crisp 'sss'"
+            )
+        elif exp_d.get("lab", 0) == 1 and hrd_d.get("lab", 0) != 1:
+            cues.append(f"Engage your lips more for labial /{expected_p}/")
+
+        # 3. Voicing (Vocal cord vibration)
+        if exp_d.get("voi", 0) == 1 and hrd_d.get("voi", 0) == -1:
+            cues.append(
+                f"Turn on your vocal cords (feel your throat buzz) to voice /{expected_p}/ instead of voiceless /{heard_p}/"
+            )
+        elif exp_d.get("voi", 0) == -1 and hrd_d.get("voi", 0) == 1:
+            cues.append(
+                f"Whisper the sound with pure breath (no throat vibration) for unvoiced /{expected_p}/"
+            )
+
+        # 4. Lateral vs Rhotic (/l/ vs /ɹ/)
+        if exp_d.get("lat", 0) == -1 and hrd_d.get("lat", 0) == 1:
+            cues.append(
+                "Curl or bunch your tongue tip slightly back so it does NOT touch the roof of your mouth"
+            )
+        elif exp_d.get("lat", 0) == 1 and hrd_d.get("lat", 0) == -1:
+            cues.append(
+                "Touch the tip of your tongue firmly to the ridge right behind your upper front teeth for /l/"
+            )
+
+        # 5. Vowel height, backness, rounding & tenseness
+        if exp_d.get("syl", 0) == 1 and hrd_d.get("syl", 0) == 1:
+            if exp_d.get("lo", 0) == 1 and hrd_d.get("lo", 0) != 1:
+                cues.append(f"Drop your jaw slightly wider for open vowel /{expected_p}/")
+            elif exp_d.get("hi", 0) == 1 and hrd_d.get("hi", 0) != 1:
+                cues.append(f"Raise your tongue higher toward the roof of your mouth for /{expected_p}/")
+            if exp_d.get("round", 0) == 1 and hrd_d.get("round", 0) != 1:
+                cues.append(f"Round your lips into an oval circle for /{expected_p}/")
+            elif exp_d.get("round", 0) == -1 and hrd_d.get("round", 0) == 1:
+                cues.append(f"Unround and spread your lips slightly for /{expected_p}/")
+            if exp_d.get("tense", 0) == 1 and hrd_d.get("tense", 0) == -1:
+                cues.append(f"Hold /{expected_p}/ slightly longer and with firmer lip/tongue tension")
+
+        if not cues:
+            return f"You produced /{heard_p}/ instead of /{expected_p}/ — adjust tongue placement toward /{expected_p}/."
+        return " · ".join(cues) + "."
+
+    def _evaluate_word_stress(
+        self,
+        wt: WordPhonemeTarget,
+        aligned_phonemes: list[AlignedPhonemeSpan],
+    ) -> WordStressDiagnostic:
+        """
+        Evaluate multi-syllable lexical stress by comparing acoustic syllable duration (ms)
+        and phoneme GOP prominence against `espeak-ng`'s expected primary stress syllable.
+        """
+        if not wt.syllables or len(wt.syllables) <= 1:
+            dur = int(
+                round(
+                    sum(max(1, p.end_frame - p.start_frame) for p in aligned_phonemes)
+                    * self.frame_stride_ms
+                )
+            )
+            avg_s = (
+                int(round(float(np.mean([p.gop_score for p in aligned_phonemes]))))
+                if aligned_phonemes
+                else 100
+            )
+            return WordStressDiagnostic(
+                syllable_count=1,
+                expected_primary_index=0,
+                detected_peak_index=0,
+                stress_correct=True,
+                stress_pattern_display=f"ˈ{wt.sanitized_ipa}",
+                coaching_tip=None,
+                syllables=[
+                    SyllableStressItem(
+                        syllable_ipa=wt.sanitized_ipa,
+                        stress="primary",
+                        duration_ms=dur,
+                        score=avg_s,
+                    )
+                ],
+            )
+
+        syl_items: list[SyllableStressItem] = []
+        prominence_scores: list[float] = []
+        expected_primary_idx = 0
+
+        for idx, syl in enumerate(wt.syllables):
+            if syl.stress == "primary":
+                expected_primary_idx = idx
+            valid_indices = [i for i in syl.phoneme_indices if 0 <= i < len(aligned_phonemes)]
+            if valid_indices:
+                spans = [aligned_phonemes[i] for i in valid_indices]
+                dur_ms = int(
+                    round(
+                        sum(max(1, s.end_frame - s.start_frame) for s in spans)
+                        * self.frame_stride_ms
+                    )
+                )
+                syl_gop = int(round(float(np.mean([s.gop_score for s in spans]))))
+            else:
+                dur_ms = 40
+                syl_gop = 75
+
+            syl_items.append(
+                SyllableStressItem(
+                    syllable_ipa=syl.ipa,
+                    stress=syl.stress,
+                    duration_ms=dur_ms,
+                    score=syl_gop,
+                )
+            )
+            # Prominence combines acoustic duration and clarity
+            prominence_scores.append(dur_ms * (0.5 + 0.5 * (syl_gop / 100.0)))
+
+        detected_peak_idx = int(np.argmax(prominence_scores))
+        # Stress is considered accurate if primary syllable is the peak OR within 80% of peak prominence
+        expected_prom = prominence_scores[expected_primary_idx]
+        max_prom = max(prominence_scores) if prominence_scores else 1.0
+        stress_ok = (detected_peak_idx == expected_primary_idx) or (expected_prom >= 0.78 * max_prom)
+
+        pattern_parts: list[str] = []
+        for idx, item in enumerate(syl_items):
+            if idx == expected_primary_idx:
+                pattern_parts.append(f"ˈ{item.syllable_ipa.upper()}")
+            elif item.stress == "secondary":
+                pattern_parts.append(f"ˌ{item.syllable_ipa}")
+            else:
+                pattern_parts.append(item.syllable_ipa)
+        pattern_str = " · ".join(pattern_parts)
+
+        tip: str | None = None
+        if not stress_ok:
+            target_syl = syl_items[expected_primary_idx].syllable_ipa
+            tip = (
+                f"Put stronger emphasis and longer vowel length on syllable #{expected_primary_idx + 1} "
+                f"(/{target_syl}/ in {pattern_str}) while keeping unstressed syllables shorter."
+            )
+        else:
+            target_syl = syl_items[expected_primary_idx].syllable_ipa
+            tip = f"Good lexical stress on syllable #{expected_primary_idx + 1} (/{target_syl}/ in {pattern_str})."
+
+        return WordStressDiagnostic(
+            syllable_count=len(syl_items),
+            expected_primary_index=expected_primary_idx,
+            detected_peak_index=detected_peak_idx,
+            stress_correct=stress_ok,
+            stress_pattern_display=pattern_str,
+            coaching_tip=tip,
+            syllables=syl_items,
+        )
 
     def _calibrate_gop_score(
         self,
@@ -417,6 +615,7 @@ class ForcedAlignerGOP:
                             heard=hrd_p,
                             gop_score=adjusted_gop,
                             error="substitution",
+                            articulatory_diff=self.describe_articulatory_diff(span.phoneme, hrd_p),
                         )
                     )
                 i -= 1
@@ -440,6 +639,7 @@ class ForcedAlignerGOP:
                             heard=None,
                             gop_score=min(span.gop_score, 25),
                             error="deletion",
+                            articulatory_diff=f"Missing /{span.phoneme}/ sound — make sure to articulate /{span.phoneme}/ clearly instead of skipping it.",
                         )
                     )
                 i -= 1
@@ -451,6 +651,7 @@ class ForcedAlignerGOP:
                         heard=hrd_p,
                         gop_score=20,
                         error="insertion",
+                        articulatory_diff=f"Extra /{hrd_p}/ sound inserted — transition smoothly without adding /{hrd_p}/.",
                     )
                 )
                 j -= 1
@@ -516,6 +717,7 @@ class ForcedAlignerGOP:
             )
 
             word_gop = int(round(float(np.mean([p.gop_score for p in aligned_phonemes]))))
+            stress_diag = self._evaluate_word_stress(wt, aligned_phonemes)
 
             # Mandatory Day-1 Optimization #3:
             # If a word's average GOP score exceeds `85/100`, mark it `correct` and skip
@@ -540,6 +742,7 @@ class ForcedAlignerGOP:
                         start_ms=start_ms,
                         end_ms=end_ms,
                         phonemes=phoneme_items,
+                        word_stress=stress_diag,
                     )
                 )
                 continue
@@ -598,6 +801,7 @@ class ForcedAlignerGOP:
                     start_ms=start_ms,
                     end_ms=end_ms,
                     phonemes=phoneme_diagnostics,
+                    word_stress=stress_diag,
                 )
             )
 

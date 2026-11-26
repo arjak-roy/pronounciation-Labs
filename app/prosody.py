@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.schemas import PronunciationMetrics, WordAssessment
+from app.g2p import IPA_VOWEL_CHARS
+from app.schemas import (
+    ConnectedSpeechReport,
+    PronunciationMetrics,
+    WordAssessment,
+    WordLinkDiagnostic,
+)
 
 UNSTRESSED_FUNCTION_WORDS: frozenset[str] = frozenset(
     {
@@ -267,3 +273,115 @@ def compute_pronunciation_metrics(
         prosody_similarity=prosody_similarity,
     )
     return overall_score, metrics
+
+
+def analyze_connected_speech(
+    words: list[WordAssessment],
+    waveform: np.ndarray | None = None,
+    sample_rate: int = 16000,
+) -> ConnectedSpeechReport:
+    """
+    Analyze word-to-word connected speech linking (C->V liaison, V->V glide linking,
+    consonant gemination/elision) and sentence F0 intonation trajectory.
+    """
+    links: list[WordLinkDiagnostic] = []
+    smooth_count = 0
+    choppy_count = 0
+
+    for i in range(len(words) - 1):
+        w1 = words[i]
+        w2 = words[i + 1]
+        gap_ms = max(0, w2.start_ms - w1.end_ms)
+
+        end_ch = w1.expected_ipa[-1:] if w1.expected_ipa else ""
+        start_ch = w2.expected_ipa[:1] if w2.expected_ipa else ""
+        end_is_vowel = bool(end_ch and end_ch in IPA_VOWEL_CHARS)
+        start_is_vowel = bool(start_ch and start_ch in IPA_VOWEL_CHARS)
+
+        if not end_is_vowel and start_is_vowel:
+            link_type = "consonant_to_vowel"
+        elif end_is_vowel and start_is_vowel:
+            link_type = "vowel_to_vowel"
+        elif not end_is_vowel and not start_is_vowel and end_ch == start_ch:
+            link_type = "consonant_cluster"
+        else:
+            link_type = "normal"
+
+        if gap_ms <= 90:
+            status = "smooth_link"
+            smooth_count += 1
+            tip = (
+                f"Smooth C→V link: '{w1.word}‿{w2.word}' connected seamlessly ({gap_ms}ms)."
+                if link_type == "consonant_to_vowel"
+                else None
+            )
+        elif gap_ms <= 190:
+            status = "natural_pause"
+            tip = (
+                f"Try linking the final /{end_ch}/ of '{w1.word}' directly into the vowel of '{w2.word}' ('{w1.word}‿{w2.word}')."
+                if link_type == "consonant_to_vowel"
+                else None
+            )
+        else:
+            status = "choppy_pause"
+            choppy_count += 1
+            tip = (
+                f"Choppy break ({gap_ms}ms) between '{w1.word}' and '{w2.word}' — blend '{w1.word}‿{w2.word}' without stopping airflow."
+            )
+
+        links.append(
+            WordLinkDiagnostic(
+                from_word=w1.word,
+                to_word=w2.word,
+                link_type=link_type,
+                gap_ms=gap_ms,
+                status=status,
+                coaching_tip=tip,
+            )
+        )
+
+    total_links = max(1, len(links))
+    linking_score = int(
+        np.clip(
+            round(100.0 * (smooth_count + 0.65 * (len(links) - smooth_count - choppy_count)) / total_links),
+            0,
+            100,
+        )
+    ) if links else 100
+
+    # Downsample F0 contour to <= 24 points for compact UI rendering
+    contour_list: list[float] = []
+    intonation_type = "expressive"
+    if waveform is not None and waveform.size > 0:
+        f0 = extract_f0_pitch_contour(waveform, sample_rate=sample_rate)
+        if f0.size >= 4:
+            step = max(1, f0.size // 24)
+            contour_list = [round(float(x), 1) for x in f0[::step][:24]]
+            f0_cv = float(np.std(f0) / (np.mean(f0) + 1e-6))
+            head_mean = float(np.mean(f0[: max(2, f0.size // 3)]))
+            tail_mean = float(np.mean(f0[-max(2, f0.size // 3) :]))
+            if f0_cv < 0.03:
+                intonation_type = "flat_monotone"
+            elif tail_mean < head_mean * 0.92:
+                intonation_type = "falling_statement"
+            elif tail_mean > head_mean * 1.08:
+                intonation_type = "rising_question"
+            else:
+                intonation_type = "expressive"
+
+    if choppy_count > 0:
+        summary_tip = f"Detected {choppy_count} choppy pause(s) between words. Practice linking consonant-to-vowel boundaries ('‿') in one continuous breath."
+    elif intonation_type == "flat_monotone":
+        summary_tip = "Your word linking is smooth, but your pitch stayed flat. Raise your pitch slightly on stressed content words."
+    else:
+        summary_tip = "Natural connected speech flow and expressive intonation contour!"
+
+    return ConnectedSpeechReport(
+        linking_score=linking_score,
+        smooth_links_count=smooth_count,
+        choppy_Pause_count=choppy_count,
+        intonation_contour_hz=contour_list,
+        intonation_type=intonation_type,
+        summary_tip=summary_tip,
+        links=links,
+    )

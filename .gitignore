@@ -13,3 +13,6 @@ build/
 models/*.onnx
 models/*.onnx.data
 models/tokenizer/
+models/sherpa-en/
+frontend/node_modules/
+frontend/dist/

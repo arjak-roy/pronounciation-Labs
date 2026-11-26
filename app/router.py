@@ -21,7 +21,7 @@ from app.aligner_gop import ForcedAlignerGOP
 from app.audio_utils import load_and_normalize_audio, split_at_breath_pauses
 from app.config import Settings
 from app.g2p import G2PService
-from app.prosody import compute_pronunciation_metrics
+from app.prosody import analyze_connected_speech, compute_pronunciation_metrics
 from app.schemas import FreeSpeechAssessResponse, PronunciationAssessResponse
 from app.stt_engines import BaseSTTEngine
 
@@ -55,6 +55,9 @@ async def preview_phonemize(
                 "word": t.word,
                 "expected_ipa": t.sanitized_ipa,
                 "phonemes": t.phonemes,
+                "syllables": [
+                    {"syllable_ipa": s.ipa, "stress": s.stress} for s in t.syllables
+                ],
             }
             for t in targets
         ],
@@ -140,11 +143,17 @@ async def _score_samples_against_text(
         waveform=samples,
         sample_rate=settings.sample_rate,
     )
+    connected = analyze_connected_speech(
+        words=words_assessed,
+        waveform=samples,
+        sample_rate=settings.sample_rate,
+    )
 
     return PronunciationAssessResponse(
         overall_score=overall_score,
         metrics=metrics,
         words=words_assessed,
+        connected_speech=connected,
     )
 
 

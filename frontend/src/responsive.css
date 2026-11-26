@@ -1,0 +1,255 @@
+/* ==========================================================================
+   GTS Academy Pronunciation Lab — Mobile-First Responsive Layout
+   Tested across 320px, 390px (Phone), 768px (Tablet), 1024px & 1440px (Desktop)
+   ========================================================================== */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.gts-container {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: clamp(10px, 2.5vw, 22px) clamp(10px, 2.5vw, 18px) 64px;
+}
+
+/* 1. Top Header */
+.gts-header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.gts-header-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 2. Swipeable Stage Quest Strip on Mobile, Grid on Desktop */
+.gts-quest-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(185px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 960px) {
+  .gts-quest-strip {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
+    gap: 10px;
+  }
+  .gts-quest-card {
+    min-width: 215px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+}
+
+/* 3. Phrase & Accent Toolbar */
+.gts-phrase-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.gts-phrase-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .gts-phrase-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+  .gts-phrase-input-row {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 440px) {
+  .gts-phrase-input-row .gts-phrase-pill-wrap {
+    display: none;
+  }
+}
+
+/* 4. Main Workspace Split: Avatar Coach + Shadowing Stage */
+.gts-workspace-grid {
+  display: grid;
+  grid-template-columns: 285px 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.gts-avatar-card-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+}
+
+.gts-avatar-viewport {
+  width: 215px;
+  height: 215px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.gts-avatar-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+/* Compact Horizontal Avatar Coach Banner on Phones & Tablets (<900px) */
+@media (max-width: 900px) {
+  .gts-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+  .gts-avatar-body {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+  }
+  .gts-avatar-viewport {
+    width: 125px;
+    height: 125px;
+  }
+}
+
+@media (max-width: 420px) {
+  .gts-avatar-viewport {
+    width: 100px;
+    height: 100px;
+  }
+}
+
+/* 5. Word Tiles Box */
+.gts-word-tiles-box {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: stretch;
+  gap: 12px;
+  padding: clamp(14px, 3vw, 22px) 10px;
+  border-radius: 18px;
+  min-height: 140px;
+}
+
+.gts-word-surface {
+  font-size: clamp(1.25rem, 4.2vw, 1.65rem);
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+/* 6. Action Buttons Dock */
+.gts-action-dock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.gts-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .gts-action-dock {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .gts-primary-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  .gts-primary-actions > button {
+    width: 100% !important;
+  }
+  .gts-secondary-actions {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 380px) {
+  .gts-primary-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 7. Result Popup Modal Responsive Grid */
+.gts-modal-score-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 18px;
+  align-items: center;
+  border-radius: 18px;
+  padding: 16px;
+}
+
+@media (max-width: 520px) {
+  .gts-modal-score-grid {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 12px;
+  }
+  .gts-modal-bars {
+    width: 100%;
+  }
+}
+
+.gts-modal-footer {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+@media (max-width: 520px) {
+  .gts-modal-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .gts-modal-footer button {
+    width: 100% !important;
+  }
+  .gts-modal-footer-right {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    margin-left: 0 !important;
+  }
+}

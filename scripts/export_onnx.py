@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import logging
 import shutil
@@ -139,6 +140,10 @@ def export_wav2vec2_dual_onnx(
             },
             dynamo=False,
         )
+
+    # Free PyTorch model from RAM before running ONNX dynamic quantization (saves ~1.3 GB RAM on 4GB instances)
+    del wrapper, base_model, dummy_input
+    gc.collect()
 
     logger.info("Running INT8 dynamic quantization for CPU profile -> %s ...", cpu_int8_path)
     quantize_dynamic(

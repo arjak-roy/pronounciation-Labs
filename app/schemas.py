@@ -20,6 +20,62 @@ class PhonemeAssessment(BaseModel):
     error: Literal["substitution", "deletion", "insertion"] | None = Field(
         default=None, description="Phoneme error classification, or null when accurate"
     )
+    articulatory_diff: str | None = Field(
+        default=None,
+        description="Dynamic panphon articulatory feature diff explaining what the mouth/tongue did vs how to fix it",
+    )
+
+
+class SyllableStressItem(BaseModel):
+    """Per-syllable stress and duration breakdown for multi-syllable words."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    syllable_ipa: str
+    stress: Literal["primary", "secondary", "unstressed"] = "unstressed"
+    duration_ms: int = 0
+    score: int = 100
+
+
+class WordStressDiagnostic(BaseModel):
+    """Multi-syllable lexical stress diagnostic for a word."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    syllable_count: int = 1
+    expected_primary_index: int = 0
+    detected_peak_index: int = 0
+    stress_correct: bool = True
+    stress_pattern_display: str = ""
+    coaching_tip: str | None = None
+    syllables: list[SyllableStressItem] = Field(default_factory=list)
+
+
+class WordLinkDiagnostic(BaseModel):
+    """Connected-speech linking analysis between word[i] and word[i+1]."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_word: str
+    to_word: str
+    link_type: Literal["consonant_to_vowel", "consonant_cluster", "vowel_to_vowel", "normal"]
+    gap_ms: int
+    status: Literal["smooth_link", "natural_pause", "choppy_pause"]
+    coaching_tip: str | None = None
+
+
+class ConnectedSpeechReport(BaseModel):
+    """Sentence-level connected speech, word linking, and intonation summary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    linking_score: int = Field(default=100, ge=0, le=100)
+    smooth_links_count: int = 0
+    choppy_Pause_count: int = 0
+    intonation_contour_hz: list[float] = Field(default_factory=list)
+    intonation_type: Literal["falling_statement", "rising_question", "flat_monotone", "expressive"] = "expressive"
+    summary_tip: str = ""
+    links: list[WordLinkDiagnostic] = Field(default_factory=list)
 
 
 class WordAssessment(BaseModel):
@@ -38,6 +94,9 @@ class WordAssessment(BaseModel):
     end_ms: int = Field(..., ge=0, description="Word end timestamp in milliseconds")
     phonemes: list[PhonemeAssessment] = Field(
         default_factory=list, description="Granular per-phoneme breakdown"
+    )
+    word_stress: WordStressDiagnostic | None = Field(
+        default=None, description="Multi-syllable lexical stress diagnostic"
     )
 
 
@@ -61,6 +120,9 @@ class PronunciationAssessResponse(BaseModel):
     overall_score: int = Field(..., ge=0, le=100, description="Composite pronunciation score (0-100)")
     metrics: PronunciationMetrics
     words: list[WordAssessment]
+    connected_speech: ConnectedSpeechReport | None = Field(
+        default=None, description="Connected speech linking and intonation contour report"
+    )
 
 
 class TranscribeEvent(BaseModel):
