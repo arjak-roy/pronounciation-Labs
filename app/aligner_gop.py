@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import io
+import logging
 import pathlib
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -42,6 +43,12 @@ ALLOPHONE_EQUIVALENCE_GROUPS: tuple[frozenset[str], ...] = (
 )
 
 UNRELEASED_FINAL_STOPS: frozenset[str] = frozenset({"t", "d", "p", "b", "k", "ɡ", "g"})
+
+# A substituted or deleted sound scoring below this caps the word at "mispronounced",
+# so one clearly wrong sound cannot be averaged away by the good ones around it.
+HARD_ERROR_GOP = 30
+
+logger = logging.getLogger("voice_pronunciation_engine")
 
 
 @contextmanager
@@ -504,8 +511,14 @@ class ForcedAlignerGOP:
                 if len(spans) == num_tokens:
                     return spans
             except Exception:
-                pass
+                logger.warning("forced_align raised; using even spacing", exc_info=True)
 
+        logger.warning(
+            "Forced alignment unavailable (frames=%d, tokens=%d); using even spacing, "
+            "so per-sound scores are unreliable for this clip.",
+            num_frames,
+            num_tokens,
+        )
         spans_fallback: list[tuple[int, int]] = []
         for idx in range(num_tokens):
             start_f = int(round(idx * max(1, num_frames - 1) / max(1, num_tokens)))
@@ -726,7 +739,10 @@ class ForcedAlignerGOP:
             # Mandatory Day-1 Optimization #3:
             # If a word's average GOP score exceeds `85/100`, mark it `correct` and skip
             # Needleman-Wunsch alignment and `panphon` lookups for that word!
-            if word_gop > self.gop_pass_threshold:
+            # The mean alone can hide one bad sound in a long word, so the weakest sound must
+            # also clear the warn threshold to take the fast path.
+            weakest_gop = min(p.gop_score for p in aligned_phonemes)
+            if word_gop > self.gop_pass_threshold and weakest_gop >= self.gop_warn_threshold:
                 phoneme_items = [
                     PhonemeAssessment(
                         expected=p.phoneme,
@@ -793,6 +809,12 @@ class ForcedAlignerGOP:
             elif final_word_score >= self.gop_warn_threshold:
                 status = "warning"
             else:
+                status = "mispronounced"
+
+            if status in ("correct", "warning") and any(
+                p.error in ("substitution", "deletion") and p.gop_score < HARD_ERROR_GOP
+                for p in phoneme_diagnostics
+            ):
                 status = "mispronounced"
 
             word_assessments.append(
