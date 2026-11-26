@@ -35,9 +35,17 @@ from app.stt_engines import BaseSTTEngine
 
 router = APIRouter()
 _STATIC_HTML_PATH = Path(__file__).resolve().parent / "static" / "index.html"
+_REACT_HTML_PATH = Path(__file__).resolve().parent / "static" / "react-app" / "index.html"
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def serve_transitvox_react_app() -> HTMLResponse:
+    """Serve the production TransitVox React App at /, falling back to HTML tester if not built."""
+    if _REACT_HTML_PATH.exists():
+        return HTMLResponse(content=_REACT_HTML_PATH.read_text(encoding="utf-8"))
+    return HTMLResponse(content=_STATIC_HTML_PATH.read_text(encoding="utf-8"))
+
+
 @router.get("/tester", response_class=HTMLResponse, summary="Browser HTML Testing Client")
 async def serve_html_tester() -> HTMLResponse:
     """Serve the built-in browser HTML testing client for Mode A & Mode B."""

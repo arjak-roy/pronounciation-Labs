@@ -250,7 +250,21 @@ export default function App() {
   const [autoStopVad, setAutoStopVad] = useState<boolean>(true);
   const [soundEffectsOn, setSoundEffectsOn] = useState<boolean>(true);
 
-  const apiBase = apiTarget === 'aws' ? '/aws-api' : '/local-api';
+  const isLocalViteDev =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+    window.location.port === '5173';
+
+  const apiBase =
+    apiTarget === 'aws'
+      ? isLocalViteDev
+        ? '/aws-api'
+        : typeof window !== 'undefined' && window.location.hostname.includes('18-234-54-50')
+        ? ''
+        : 'https://18-234-54-50.nip.io'
+      : isLocalViteDev
+      ? '/local-api'
+      : 'http://127.0.0.1:8000';
 
   // --- Library Database State ---
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>(() => loadFallbackLibrary());
@@ -1094,20 +1108,12 @@ export default function App() {
     score >= 90 ? 3 : score >= 75 ? 2 : score >= 55 ? 1 : 0;
 
   return (
-    <div style={{ maxWidth: 1180, margin: '0 auto', padding: '14px 16px 48px' }}>
+    <div className="tv-app-shell">
       {/* =====================================================================
           1. CLEAN LEARNER HEADER WITH 3 PRIMARY NAVIGATION TABS
          ===================================================================== */}
       <GameCard style={{ marginBottom: 16, padding: '12px 16px' }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 12,
-          }}
-        >
+        <div className="tv-header-row">
           {/* Brand */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <IconTile tone="navy" size={44}>
@@ -1136,38 +1142,40 @@ export default function App() {
           </div>
 
           {/* 3 Primary Learner Navigation Tabs */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div className="tv-nav-tabs">
             <ChunkyButton
               tone={activeTab === 'practice' ? 'navy' : 'soft'}
               size="sm"
               onClick={() => setActiveTab('practice')}
             >
-              <Target size={15} /> Practice Studio
+              <Target size={15} /> Practice
             </ChunkyButton>
             <ChunkyButton
               tone={activeTab === 'library' ? 'navy' : 'soft'}
               size="sm"
               onClick={() => setActiveTab('library')}
             >
-              <BookOpen size={15} /> Word & Phrase Bank ({libraryItems.length})
+              <BookOpen size={15} /> Library ({libraryItems.length})
             </ChunkyButton>
             <ChunkyButton
               tone={activeTab === 'progress' ? 'navy' : 'soft'}
               size="sm"
               onClick={() => setActiveTab('progress')}
             >
-              <TrendingUp size={15} /> My Progress
+              <TrendingUp size={15} /> Progress
             </ChunkyButton>
           </div>
 
           {/* Right HUD: Streak, Stars & Settings Gear */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="tv-hud-pills">
             <Pill tone="orange">
               <Flame size={13} /> {streak} Streak
             </Pill>
-            <Pill tone="blue">
-              <Award size={13} /> {masteredCount} Mastered
-            </Pill>
+            <span className="tv-mastered-pill">
+              <Pill tone="blue">
+                <Award size={13} /> {masteredCount} Mastered
+              </Pill>
+            </span>
             <ChunkyButton
               tone="soft"
               size="sm"
@@ -1187,18 +1195,9 @@ export default function App() {
         <>
           {/* A. Simple Filter & Curriculum Strip */}
           <GameCard style={{ marginBottom: 16, padding: '12px 16px' }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: 10,
-                marginBottom: 12,
-              }}
-            >
+            <div className="tv-filter-top-row">
               {/* Language & Mode Filters */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div className="tv-filter-controls">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Globe size={15} color={c.muted} />
                   <select
@@ -1284,24 +1283,16 @@ export default function App() {
             </div>
 
             {/* Horizontal Swipeable Cards from the DB */}
-            <div
-              style={{
-                display: 'flex',
-                gap: 10,
-                overflowX: 'auto',
-                paddingBottom: 6,
-              }}
-            >
+            <div className="tv-deck-strip">
               {filteredItems.map((item) => {
                 const isSelected = item.id === activeItemId;
                 const itemStars = starsForScore(item.best_score || 0);
                 return (
                   <div
                     key={item.id}
+                    className="tv-deck-card"
                     onClick={() => selectLibraryItemForPractice(item)}
                     style={{
-                      minWidth: 215,
-                      maxWidth: 240,
                       padding: '10px 12px',
                       borderRadius: 14,
                       border: `2px solid ${
@@ -1313,7 +1304,6 @@ export default function App() {
                           : '#FFFBEB'
                         : c.surface,
                       cursor: 'pointer',
-                      flexShrink: 0,
                       transition: 'transform 0.15s ease',
                     }}
                   >
@@ -1398,76 +1388,77 @@ export default function App() {
             )}
 
             {/* Left Column: 3D Avatar Coach */}
-            <GameCard style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <select
-                  value={characterId}
-                  onChange={(e) => setCharacterId(e.target.value)}
-                  style={{
-                    padding: '5px 10px',
-                    borderRadius: 10,
-                    border: `1.5px solid ${c.border}`,
-                    background: c.surface,
-                    color: c.text,
-                    fontWeight: 800,
-                    fontSize: 12,
-                    cursor: 'pointer',
-                  }}
+            <GameCard innerStyle={{ padding: 14 }}>
+              <div className="tv-avatar-layout">
+                <div
+                  className="tv-avatar-header"
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
                 >
-                  {CHARACTERS.map((ch) => (
-                    <option key={ch.id} value={ch.id}>
-                      {ch.emoji} {ch.label}
-                    </option>
-                  ))}
-                </select>
-                <Pill tone="purple">{friendlyVisemeLabel(mouthViseme)}</Pill>
-              </div>
+                  <select
+                    value={characterId}
+                    onChange={(e) => setCharacterId(e.target.value)}
+                    style={{
+                      padding: '5px 10px',
+                      borderRadius: 10,
+                      border: `1.5px solid ${c.border}`,
+                      background: c.surface,
+                      color: c.text,
+                      fontWeight: 800,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {CHARACTERS.map((ch) => (
+                      <option key={ch.id} value={ch.id}>
+                        {ch.emoji} {ch.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Pill tone="purple">{friendlyVisemeLabel(mouthViseme)}</Pill>
+                </div>
 
-              <div
-                ref={avatarHostRef}
-                style={{
-                  position: 'relative',
-                  width: '100%',
-                  height: 230,
-                  borderRadius: 16,
-                  overflow: 'hidden',
-                  background: isDark
-                    ? 'radial-gradient(circle at 50% 35%, #1e293b, #0f172a)'
-                    : 'radial-gradient(circle at 50% 35%, #DBEAFE, #EFF6FF)',
-                  border: `2px solid ${isAnalyzing ? '#F89A1C' : c.border}`,
-                  transition: 'border-color 0.2s ease',
-                }}
-              />
+                <div
+                  ref={avatarHostRef}
+                  className="tv-avatar-viewport"
+                  style={{
+                    background: isDark
+                      ? 'radial-gradient(circle at 50% 35%, #1e293b, #0f172a)'
+                      : 'radial-gradient(circle at 50% 35%, #DBEAFE, #EFF6FF)',
+                    border: `2px solid ${isAnalyzing ? '#F89A1C' : c.border}`,
+                    transition: 'border-color 0.2s ease',
+                  }}
+                />
 
-              {isAnalyzing && (
+                {isAnalyzing && (
+                  <div
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 10,
+                      background: 'rgba(248,154,28,0.16)',
+                      border: '1px solid rgba(248,154,28,0.45)',
+                      color: '#F89A1C',
+                      fontSize: 12,
+                      fontWeight: 800,
+                      textAlign: 'center',
+                    }}
+                  >
+                    🤔 {CHARACTERS.find((ch) => ch.id === characterId)?.label || 'Coach'} is thinking...
+                  </div>
+                )}
+
+                {/* Friendly Coach Speech Bubble */}
                 <div
                   style={{
-                    padding: '6px 10px',
-                    borderRadius: 10,
-                    background: 'rgba(248,154,28,0.16)',
-                    border: '1px solid rgba(248,154,28,0.45)',
-                    color: '#F89A1C',
-                    fontSize: 12,
-                    fontWeight: 800,
-                    textAlign: 'center',
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: isDark ? '#1E293B' : '#F8FAFC',
+                    border: `1.5px solid ${c.border}`,
+                    fontSize: 13,
+                    lineHeight: 1.45,
                   }}
-                >
-                  🤔 {CHARACTERS.find((ch) => ch.id === characterId)?.label || 'Coach'} is thinking...
-                </div>
-              )}
-
-              {/* Friendly Coach Speech Bubble */}
-              <div
-                style={{
-                  padding: '10px 12px',
-                  borderRadius: 12,
-                  background: isDark ? '#1E293B' : '#F8FAFC',
-                  border: `1.5px solid ${c.border}`,
-                  fontSize: 13,
-                  lineHeight: 1.45,
-                }}
-                dangerouslySetInnerHTML={{ __html: coachBubble }}
-              />
+                  dangerouslySetInnerHTML={{ __html: coachBubble }}
+                />
+              </div>
             </GameCard>
 
             {/* Right Column: Learner Practice Stage */}
@@ -1572,7 +1563,7 @@ export default function App() {
               </div>
 
               {/* Editable Practice Input (or Quick Custom Sentence) */}
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className="tv-input-speed-row">
                 <input
                   type="text"
                   value={referenceText}
@@ -1583,6 +1574,7 @@ export default function App() {
                   placeholder="Type any word or sentence you want to practice..."
                   style={{
                     flex: 1,
+                    minWidth: 0,
                     padding: '9px 12px',
                     borderRadius: 12,
                     border: `1.5px solid ${c.border}`,
@@ -1605,6 +1597,7 @@ export default function App() {
                     fontWeight: 800,
                     fontSize: 12,
                     cursor: 'pointer',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   {speechSpeed === 1.0 ? '⚡ Normal 1.0x' : '🐢 Slow 0.75x'}
@@ -1613,17 +1606,10 @@ export default function App() {
 
               {/* Interactive Word & Syllable Tiles */}
               <div
+                className="tv-word-tiles-stage"
                 style={{
-                  padding: '18px 16px',
-                  borderRadius: 16,
                   background: isDark ? '#0F172A' : '#F8FAFC',
                   border: `1.5px solid ${c.border}`,
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 10,
-                  minHeight: 128,
                 }}
               >
                 {displayWords.map((w, idx) => {
@@ -1814,28 +1800,31 @@ export default function App() {
               )}
 
               {/* Primary Learner Action Buttons */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <div className="tv-action-bar">
                 <ChunkyButton
                   tone="soft"
                   onClick={() => speakCoachPhrase()}
                   disabled={isRecording || isAnalyzing}
                 >
-                  <Volume2 size={17} /> 1. Listen to Coach
+                  <Volume2 size={17} /> 1. Listen
                 </ChunkyButton>
 
-                {!isRecording ? (
-                  <ChunkyButton
-                    tone="orange"
-                    onClick={startRecording}
-                    disabled={isAnalyzing}
-                  >
-                    <Mic size={17} /> {isAnalyzing ? 'Scoring Your Voice...' : '2. Speak Now'}
-                  </ChunkyButton>
-                ) : (
-                  <ChunkyButton tone="red" onClick={stopRecordingAndScore}>
-                    <Square size={17} /> Stop & Score
-                  </ChunkyButton>
-                )}
+                <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
+                  {!isRecording ? (
+                    <ChunkyButton
+                      tone="orange"
+                      fullWidth
+                      onClick={startRecording}
+                      disabled={isAnalyzing}
+                    >
+                      <Mic size={17} /> {isAnalyzing ? 'Scoring...' : '2. Speak Now'}
+                    </ChunkyButton>
+                  ) : (
+                    <ChunkyButton tone="red" fullWidth onClick={stopRecordingAndScore}>
+                      <Square size={17} /> Stop & Score
+                    </ChunkyButton>
+                  )}
+                </div>
 
                 <ChunkyButton
                   tone="navy"
@@ -1855,7 +1844,11 @@ export default function App() {
                   </ChunkyButton>
                 )}
 
-                <label style={{ cursor: 'pointer', marginLeft: 'auto' }} title="Upload a WAV file">
+                <label
+                  className="tv-upload-label"
+                  style={{ cursor: 'pointer', marginLeft: 'auto' }}
+                  title="Upload a WAV file"
+                >
                   <input
                     type="file"
                     accept="audio/wav,audio/*"
@@ -2002,10 +1995,8 @@ export default function App() {
 
               {/* 2. Sound-by-Sound Cards with Plain-English Articulatory Diff */}
               <div
+                className="tv-phoneme-grid"
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-                  gap: 10,
                   marginBottom: assessResult?.connected_speech ? 14 : 0,
                 }}
               >
@@ -2281,13 +2272,7 @@ export default function App() {
           </div>
 
           {/* Items Grid */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))',
-              gap: 12,
-            }}
-          >
+          <div className="tv-library-grid">
             {filteredItems.map((item) => {
               const langMeta = LANGUAGE_OPTIONS.find((l) => l.code === item.language);
               return (
@@ -2418,13 +2403,7 @@ export default function App() {
          ===================================================================== */}
       {activeTab === 'progress' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-              gap: 12,
-            }}
-          >
+          <div className="tv-progress-stats-grid">
             <StatTile
               label="Mastered (85%+)"
               value={`${libraryStats?.mastered_count ?? masteredCount} / ${libraryItems.length}`}
@@ -2521,24 +2500,15 @@ export default function App() {
          ===================================================================== */}
       {showResultPopup && assessResult && (
         <div
+          className="tv-modal-backdrop"
           onClick={() => setShowResultPopup(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 90,
-            background: 'rgba(15, 23, 42, 0.72)',
-            backdropFilter: 'blur(6px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 16,
-          }}
         >
           <div
+            className="tv-modal-scroll-box"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: '100%', maxWidth: 500 }}
+            style={{ maxWidth: 500 }}
           >
-            <GameCard style={{ padding: '22px 24px', textAlign: 'center' }}>
+            <GameCard innerStyle={{ padding: '18px 20px', textAlign: 'center' }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
@@ -2558,21 +2528,21 @@ export default function App() {
                 <StarRow earned={starsForScore(assessResult.overall_score)} total={3} size={28} />
               </div>
 
-              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>
+              <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 4 }}>
                 {assessResult.overall_score >= 90
                   ? '🌟 Outstanding Pronunciation!'
                   : assessResult.overall_score >= 75
                   ? '👏 Great Job — Very Clear!'
                   : '💪 Good Effort — Let’s Polish It!'}
               </div>
-              <div style={{ fontSize: 13, color: c.muted, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: c.muted, marginBottom: 14 }}>
                 “{referenceText}”
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                 <ProgressRing
                   value={assessResult.overall_score}
-                  size={112}
+                  size={108}
                   stroke={10}
                   tone={
                     assessResult.overall_score >= 85
@@ -2586,14 +2556,7 @@ export default function App() {
                 />
               </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
-                  gap: 10,
-                  marginBottom: 14,
-                }}
-              >
+              <div className="tv-popup-stats-grid">
                 <StatTile
                   label="Sounds"
                   value={`${assessResult.metrics.accuracy}%`}
@@ -2728,14 +2691,7 @@ export default function App() {
                 );
               })()}
 
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  justifyContent: 'center',
-                  flexWrap: 'wrap',
-                }}
-              >
+              <div className="tv-popup-actions">
                 {recordedAudioUrl && (
                   <ChunkyButton tone="green" size="sm" onClick={playMyVoice}>
                     <Play size={15} /> Hear My Voice
@@ -2779,21 +2735,15 @@ export default function App() {
          ===================================================================== */}
       {showItemModal && (
         <div
+          className="tv-modal-backdrop"
           onClick={() => setShowItemModal(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 95,
-            background: 'rgba(15, 23, 42, 0.72)',
-            backdropFilter: 'blur(6px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 16,
-          }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 520 }}>
-            <GameCard style={{ padding: '20px 22px' }}>
+          <div
+            className="tv-modal-scroll-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 520 }}
+          >
+            <GameCard innerStyle={{ padding: '18px 20px' }}>
               <div
                 style={{
                   display: 'flex',
@@ -2843,7 +2793,7 @@ export default function App() {
                   />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="tv-form-two-col">
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 800, display: 'block', marginBottom: 4 }}>
                       Language
@@ -2893,7 +2843,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="tv-form-two-col">
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 800, display: 'block', marginBottom: 4 }}>
                       Category
@@ -2985,21 +2935,15 @@ export default function App() {
          ===================================================================== */}
       {showSettingsModal && (
         <div
+          className="tv-modal-backdrop"
           onClick={() => setShowSettingsModal(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 95,
-            background: 'rgba(15, 23, 42, 0.72)',
-            backdropFilter: 'blur(6px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 16,
-          }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 440 }}>
-            <GameCard style={{ padding: '20px 22px' }}>
+          <div
+            className="tv-modal-scroll-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 440 }}
+          >
+            <GameCard innerStyle={{ padding: '18px 20px' }}>
               <div
                 style={{
                   display: 'flex',

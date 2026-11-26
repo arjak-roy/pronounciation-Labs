@@ -20,6 +20,7 @@ from app.stt_engines import create_stt_engine
 logger = logging.getLogger("voice_pronunciation_engine")
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _CHARACTERS_DIR = _STATIC_DIR / "characters"
+_REACT_ASSETS_DIR = _STATIC_DIR / "react-app" / "assets"
 
 
 @asynccontextmanager
@@ -93,6 +94,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     if _CHARACTERS_DIR.exists():
         app.mount("/characters", StaticFiles(directory=str(_CHARACTERS_DIR)), name="characters")
+    if _REACT_ASSETS_DIR.exists():
+        app.mount("/assets", StaticFiles(directory=str(_REACT_ASSETS_DIR)), name="assets")
     app.include_router(router)
     return app
 
