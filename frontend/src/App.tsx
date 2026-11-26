@@ -930,9 +930,13 @@ export default function App() {
     setErrorMsg(null);
     if (avatarRuntimeRef.current) {
       avatarRuntimeRef.current.setActivity('thinking');
-      avatarRuntimeRef.current.setHeadTurn(0);
+      avatarRuntimeRef.current.setExpression('surprised', 0.45);
+      if (typeof avatarRuntimeRef.current.setGaze === 'function') {
+        avatarRuntimeRef.current.setGaze('up');
+      }
+      avatarRuntimeRef.current.setHeadTurn(0.08);
     }
-    setCoachBubble('🧠 Checking every sound, word stress beat, and smooth word link...');
+    setCoachBubble('🤔 Hmm, let me listen closely to your sounds, syllable stress, and flow...');
 
     const t0 = performance.now();
     try {
@@ -950,6 +954,12 @@ export default function App() {
       });
       const elapsed = Math.round(performance.now() - t0);
       setLatencyMs(elapsed);
+
+      // Keep the thinking avatar screen visible for at least 750ms so the transition feels natural
+      const minWait = Math.max(0, 750 - (performance.now() - t0));
+      if (minWait > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, minWait));
+      }
 
       const data = await res.json();
       if (!res.ok) {
@@ -1104,8 +1114,8 @@ export default function App() {
               <Mic size={22} />
             </IconTile>
             <div>
-              <div style={{ fontWeight: 900, fontSize: 18, letterSpacing: '-0.02em' }}>
-                GTS Speak & Shine Coach
+              <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: '-0.02em' }}>
+                TransitVox
               </div>
               <div style={{ fontSize: 12, color: c.muted, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span
@@ -1119,7 +1129,7 @@ export default function App() {
                 />
                 <span>
                   {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.flag || '🌐'}{' '}
-                  {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'All Languages'} · Interactive Pronunciation Studio
+                  {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'All Languages'} · Voice & Pronunciation Coach
                 </span>
               </div>
             </div>
@@ -1416,6 +1426,7 @@ export default function App() {
               <div
                 ref={avatarHostRef}
                 style={{
+                  position: 'relative',
                   width: '100%',
                   height: 230,
                   borderRadius: 16,
@@ -1423,9 +1434,27 @@ export default function App() {
                   background: isDark
                     ? 'radial-gradient(circle at 50% 35%, #1e293b, #0f172a)'
                     : 'radial-gradient(circle at 50% 35%, #DBEAFE, #EFF6FF)',
-                  border: `1.5px solid ${c.border}`,
+                  border: `2px solid ${isAnalyzing ? '#F89A1C' : c.border}`,
+                  transition: 'border-color 0.2s ease',
                 }}
               />
+
+              {isAnalyzing && (
+                <div
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 10,
+                    background: 'rgba(248,154,28,0.16)',
+                    border: '1px solid rgba(248,154,28,0.45)',
+                    color: '#F89A1C',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    textAlign: 'center',
+                  }}
+                >
+                  🤔 {CHARACTERS.find((ch) => ch.id === characterId)?.label || 'Coach'} is thinking...
+                </div>
+              )}
 
               {/* Friendly Coach Speech Bubble */}
               <div
@@ -1442,7 +1471,74 @@ export default function App() {
             </GameCard>
 
             {/* Right Column: Learner Practice Stage */}
-            <GameCard style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 14 }}>
+            <GameCard
+              style={{
+                position: 'relative',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                gap: 14,
+              }}
+            >
+              {/* Thinking / Analyzing Loading Screen Overlay */}
+              {isAnalyzing && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    zIndex: 35,
+                    borderRadius: 20,
+                    background: isDark
+                      ? 'rgba(15, 23, 42, 0.92)'
+                      : 'rgba(255, 255, 255, 0.94)',
+                    backdropFilter: 'blur(6px)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 24,
+                    textAlign: 'center',
+                    gap: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 72,
+                      height: 72,
+                      borderRadius: 999,
+                      background: 'rgba(248, 154, 28, 0.16)',
+                      border: '3px solid #F89A1C',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 34,
+                      boxShadow: '0 0 24px rgba(248, 154, 28, 0.35)',
+                    }}
+                  >
+                    🤔
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 900 }}>
+                    {CHARACTERS.find((ch) => ch.id === characterId)?.label || 'Coach'} is Analyzing Your Voice...
+                  </div>
+                  <div style={{ fontSize: 13, color: c.muted, maxWidth: 380, lineHeight: 1.45 }}>
+                    Checking your mouth shapes, multi-syllable word stress, and smooth word flow for{' '}
+                    <strong>“{referenceText}”</strong>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      flexWrap: 'wrap',
+                      justifyContent: 'center',
+                      marginTop: 4,
+                    }}
+                  >
+                    <Pill tone="green">✓ Audio Captured</Pill>
+                    <Pill tone="orange">⏳ Scoring Sounds & Stress...</Pill>
+                  </div>
+                </div>
+              )}
+
               {/* Top Bar: Item Metadata + Prev/Next */}
               <div
                 style={{
@@ -2495,7 +2591,7 @@ export default function App() {
                   display: 'grid',
                   gridTemplateColumns: 'repeat(3, 1fr)',
                   gap: 10,
-                  marginBottom: 18,
+                  marginBottom: 14,
                 }}
               >
                 <StatTile
@@ -2515,30 +2611,162 @@ export default function App() {
                 />
               </div>
 
+              {/* Short Analysis Box inside Popup */}
+              {(() => {
+                const words = assessResult.words || [];
+                let topSoundIssue: { word: string; expected: string; heard: string; tip: string } | null = null;
+                for (const w of words) {
+                  for (const p of w.phonemes || []) {
+                    if (typeof p !== 'string' && p.error && p.expected) {
+                      const guide = FRIENDLY_PHONEME_GUIDES[p.expected];
+                      topSoundIssue = {
+                        word: w.word,
+                        expected: p.expected,
+                        heard: p.heard || '∅',
+                        tip:
+                          p.articulatory_diff ||
+                          guide?.howTo ||
+                          `Focus on the /${p.expected}/ sound in "${w.word}".`,
+                      };
+                      break;
+                    }
+                  }
+                  if (topSoundIssue) break;
+                }
+
+                const stressShiftWord = words.find(
+                  (w) =>
+                    w.word_stress &&
+                    w.word_stress.syllable_count > 1 &&
+                    !w.word_stress.stress_correct
+                );
+
+                return (
+                  <div
+                    style={{
+                      textAlign: 'left',
+                      padding: '12px 14px',
+                      borderRadius: 14,
+                      background: isDark ? '#1E293B' : '#F8FAFC',
+                      border: `1.5px solid ${c.border}`,
+                      marginBottom: 16,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 900,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.4,
+                        color: '#0D3B84',
+                      }}
+                    >
+                      📋 Quick Coach Summary
+                    </div>
+
+                    {/* Word-by-Word Colored Mini Strip */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                      {words.map((w, idx) => {
+                        const ok = w.status === 'correct';
+                        const warn = w.status === 'warning';
+                        const bg = ok
+                          ? 'rgba(22,163,74,0.14)'
+                          : warn
+                          ? 'rgba(217,119,6,0.15)'
+                          : 'rgba(220,38,38,0.15)';
+                        const fg = ok ? '#16A34A' : warn ? '#D97706' : '#DC2626';
+                        return (
+                          <span
+                            key={idx}
+                            style={{
+                              padding: '3px 9px',
+                              borderRadius: 999,
+                              background: bg,
+                              color: fg,
+                              fontWeight: 800,
+                              fontSize: 12,
+                            }}
+                          >
+                            {w.word} {typeof w.score === 'number' ? `${w.score}%` : ''}
+                          </span>
+                        );
+                      })}
+                    </div>
+
+                    {/* Top Sound Takeaway */}
+                    <div style={{ fontSize: 12, lineHeight: 1.45, color: c.text }}>
+                      {topSoundIssue ? (
+                        <>
+                          👄 <strong>Sound Fix ({topSoundIssue.word}):</strong> You said{' '}
+                          <code>/{topSoundIssue.heard}/</code> instead of{' '}
+                          <code>/{topSoundIssue.expected}/</code> — {topSoundIssue.tip}
+                        </>
+                      ) : (
+                        <>
+                          ✅ <strong>Sounds:</strong> Every target sound matched clearly!
+                        </>
+                      )}
+                    </div>
+
+                    {/* Stress or Connected Speech Takeaway */}
+                    {stressShiftWord && stressShiftWord.word_stress ? (
+                      <div style={{ fontSize: 12, lineHeight: 1.45, color: c.text }}>
+                        🎵 <strong>Word Stress ({stressShiftWord.word}):</strong>{' '}
+                        {stressShiftWord.word_stress.coaching_tip ||
+                          stressShiftWord.word_stress.tip ||
+                          'Make the stressed syllable slightly longer and louder.'}
+                      </div>
+                    ) : assessResult.connected_speech?.summary_tip ? (
+                      <div style={{ fontSize: 12, lineHeight: 1.45, color: c.text }}>
+                        🌊 <strong>Flow:</strong> {assessResult.connected_speech.summary_tip}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()}
+
               <div
                 style={{
                   display: 'flex',
-                  gap: 10,
+                  gap: 8,
                   justifyContent: 'center',
                   flexWrap: 'wrap',
                 }}
               >
                 {recordedAudioUrl && (
-                  <ChunkyButton tone="green" onClick={playMyVoice}>
-                    <Play size={16} /> Hear My Voice
+                  <ChunkyButton tone="green" size="sm" onClick={playMyVoice}>
+                    <Play size={15} /> Hear My Voice
                   </ChunkyButton>
                 )}
                 <ChunkyButton
                   tone="orange"
+                  size="sm"
                   onClick={() => {
                     setShowResultPopup(false);
                     startRecording();
                   }}
                 >
-                  <Mic size={16} /> Try Again
+                  <Mic size={15} /> Try Again
                 </ChunkyButton>
-                <ChunkyButton tone="navy" onClick={() => setShowResultPopup(false)}>
-                  <CheckCircle2 size={16} /> See Sound Tips
+                <ChunkyButton
+                  tone="soft"
+                  size="sm"
+                  onClick={() => setShowResultPopup(false)}
+                >
+                  <CheckCircle2 size={15} /> Full Breakdown
+                </ChunkyButton>
+                <ChunkyButton
+                  tone="navy"
+                  size="sm"
+                  onClick={() => {
+                    setShowResultPopup(false);
+                    stepDeckItem(1);
+                  }}
+                >
+                  Next <ChevronRight size={15} />
                 </ChunkyButton>
               </div>
             </GameCard>
