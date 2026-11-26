@@ -1050,6 +1050,7 @@
               <span>🟢 Good · 🟡 Almost · 🔴 Needs Practice</span>
             </div>
             <div class="phrase-box" id="phraseStage"></div>
+            <div id="connectedSpeechPanel" style="display:none;margin-top:10px;padding:12px 14px;border-radius:12px;background:rgba(15,23,42,0.75);border:1px solid rgba(56,189,248,0.28);"></div>
           </div>
 
           <!-- Responsive Waveform & Smart VAD -->
@@ -1153,6 +1154,7 @@
             </div>
           </div>
           <div class="coach-tip" id="coachTipBox"></div>
+          <div id="wordStressBox" style="display:none;margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(30,41,59,0.75);border:1px solid rgba(168,85,247,0.35);"></div>
           <div class="phoneme-cards" id="phonemeGrid"></div>
         </div>
       </div>
@@ -1585,7 +1587,9 @@
         : [];
       if (w.status && w.status !== "correct" && Array.isArray(w.phonemes)) {
         const errP = w.phonemes.find((p) => p.error && p.expected);
-        if (errP && PHONEME_TIPS[errP.expected]) {
+        if (errP && errP.articulatory_diff) {
+          tipText = `🎯 <strong>Articulatory Diff for /${errP.expected}/ → /${errP.heard || "∅"}/ in "${w.word}":</strong> ${errP.articulatory_diff}`;
+        } else if (errP && PHONEME_TIPS[errP.expected]) {
           tipText = `🎯 <strong>How to fix /${errP.expected}/ in "${w.word}":</strong> ${PHONEME_TIPS[errP.expected]}`;
         } else if (errP) {
           tipText = `🎯 <strong>Sound Tip for "${w.word}":</strong> We heard /${errP.heard || "silence"}/ instead of /${errP.expected}/. Click "Hear Coach Word" and watch the coach's mouth shape.`;
@@ -1597,6 +1601,60 @@
         }
       }
       tipBox.innerHTML = tipText;
+
+      // Render Multi-Syllable Word Stress diagnostic
+      const stressBox = document.getElementById("wordStressBox");
+      if (stressBox) {
+        const ws = w.word_stress;
+        const previewSyls = w.syllables;
+        if (ws && ws.syllable_count > 1 && Array.isArray(ws.syllables)) {
+          stressBox.style.display = "block";
+          const badgeColor = ws.stress_correct ? "var(--green)" : "var(--amber)";
+          const sylPills = ws.syllables
+            .map((s) => {
+              const isPrimary = s.expected_stress === "primary";
+              const isPeak = s.index === ws.detected_peak_index;
+              const border = isPrimary ? "2px solid #a855f7" : "1px solid rgba(148,163,184,0.3)";
+              const bg = isPrimary ? "rgba(168,85,247,0.22)" : "rgba(15,23,42,0.7)";
+              return `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:${border};background:${bg};font-family:monospace;font-size:0.82rem;font-weight:${isPrimary ? "800" : "600"};">
+                /${isPrimary ? "ˈ" : ""}${s.syllable_ipa}/
+                <span style="font-size:0.7rem;color:#94a3b8;">${s.duration_ms}ms${isPeak ? " ⚡" : ""}</span>
+              </span>`;
+            })
+            .join('<span style="color:#64748b;margin:0 4px;">·</span>');
+          stressBox.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+              <span style="font-size:0.76rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:#c084fc;">
+                🎵 Multi-Syllable Word Stress (${ws.syllable_count} Syllables)
+              </span>
+              <span style="font-size:0.75rem;font-weight:800;color:${badgeColor};">
+                ${ws.stress_correct ? "✅ Primary Stress Matched" : "⚠️ Stress Shifted"}
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:6px;">${sylPills}</div>
+            <div style="font-size:0.76rem;color:#cbd5e1;">${ws.tip || ""}</div>
+          `;
+        } else if (Array.isArray(previewSyls) && previewSyls.length > 1) {
+          stressBox.style.display = "block";
+          const sylPills = previewSyls
+            .map((s) => {
+              const isPrimary = s.stress === "primary";
+              return `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;border:${isPrimary ? "2px solid #a855f7" : "1px solid rgba(148,163,184,0.3)"};background:${isPrimary ? "rgba(168,85,247,0.22)" : "rgba(15,23,42,0.7)"};font-family:monospace;font-size:0.82rem;font-weight:${isPrimary ? "800" : "600"};">
+                /${isPrimary ? "ˈ" : ""}${s.syllable_ipa}/
+                <span style="font-size:0.68rem;color:#c084fc;">${isPrimary ? "STRESSED" : "weak"}</span>
+              </span>`;
+            })
+            .join('<span style="color:#64748b;margin:0 4px;">·</span>');
+          stressBox.innerHTML = `
+            <div style="font-size:0.75rem;font-weight:800;color:#c084fc;margin-bottom:6px;">
+              🎵 Expected Syllable Stress Pattern (${previewSyls.length} Syllables)
+            </div>
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">${sylPills}</div>
+          `;
+        } else {
+          stressBox.style.display = "none";
+        }
+      }
 
       if (w.status) {
         const statusFriendly =
@@ -1620,6 +1678,9 @@
               : p.error === "deletion"
               ? "Sound Skipped"
               : "Extra Sound";
+            const diffHtml = p.articulatory_diff
+              ? `<div style="font-size:0.72rem;color:#fde047;margin-top:5px;line-height:1.35;background:rgba(250,204,21,0.08);padding:5px 7px;border-radius:6px;border-left:2px solid #facc15;">👄 ${p.articulatory_diff}</div>`
+              : "";
             return `
               <div class="p-card ${ok ? "ok" : "err"}" onclick="setAvatarMouthViseme(ipaToViseme('${p.expected || ""}'), '(/${p.expected || ""}/)')">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1631,6 +1692,7 @@
                 <div style="font-size:0.74rem;color:var(--muted);margin-top:3px;">
                   ${friendlyDiag}
                 </div>
+                ${diffHtml}
                 <div class="gop-meter">
                   <div class="gop-fill" style="width:${p.gop_score}%;background:${barColor};"></div>
                 </div>
@@ -2034,6 +2096,44 @@
       assessedWords = data.words || [];
       setActiveStep(3);
       renderPhraseTiles();
+
+      // Render Connected Speech & Intonation Panel
+      const csPanel = document.getElementById("connectedSpeechPanel");
+      if (csPanel) {
+        const cs = data.connected_speech;
+        if (cs) {
+          csPanel.style.display = "block";
+          const linkPills = (cs.links || [])
+            .map((lnk) => {
+              const ok = lnk.linked_smoothly;
+              const border = ok ? "rgba(34,197,94,0.45)" : "rgba(250,204,21,0.5)";
+              const bg = ok ? "rgba(34,197,94,0.12)" : "rgba(250,204,21,0.12)";
+              const sym = ok ? "‿" : "⏸";
+              return `<div style="padding:6px 10px;border-radius:10px;border:1px solid ${border};background:${bg};font-size:0.78rem;" title="${lnk.tip || ""}">
+                <div style="font-weight:800;color:#f8fafc;">
+                  ${lnk.from_word} <span style="color:${ok ? "#4ade80" : "#facc15"};font-size:1rem;">${sym}</span> ${lnk.to_word}
+                  <span style="font-size:0.68rem;color:#94a3b8;margin-left:4px;">(${lnk.gap_ms}ms · ${lnk.link_type.replace("_", " ")})</span>
+                </div>
+                <div style="font-size:0.72rem;color:#cbd5e1;margin-top:2px;">${lnk.tip || ""}</div>
+              </div>`;
+            })
+            .join("");
+          csPanel.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <span style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:#38bdf8;">
+                🌊 Connected Speech & Word Linking (${cs.linking_score}%)
+              </span>
+              <span style="font-size:0.74rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(56,189,248,0.16);color:#7dd3fc;">
+                Pitch Contour: ${cs.intonation_type || "flat"} (${cs.pitch_slope_hz_per_sec || 0} Hz/s)
+              </span>
+            </div>
+            <div style="font-size:0.78rem;color:#e2e8f0;margin-bottom:${linkPills ? "8px" : "0"};">${cs.summary_tip || ""}</div>
+            ${linkPills ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">${linkPills}</div>` : ""}
+          `;
+        } else {
+          csPanel.style.display = "none";
+        }
+      }
 
       const score = data.overall_score;
       document.getElementById("resultsGrid").style.display = "grid";
