@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.acoustic_model import create_acoustic_engine
 from app.aligner_gop import ForcedAlignerGOP
 from app.config import Settings, get_settings
+from app.db import PronunciationLibraryDB
 from app.g2p import G2PService
 from app.router import router
 from app.stt_engines import create_stt_engine
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.g2p = g2p
     app.state.acoustic_engine = acoustic_engine
     app.state.aligner = aligner
+    app.state.library_db = PronunciationLibraryDB(db_path=settings.database_path, g2p=g2p)
     app.state.stt_engine = create_stt_engine(settings) if settings.mode_a_enabled else None
 
     logger.info(

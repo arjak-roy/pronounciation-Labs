@@ -149,3 +149,98 @@ class FreeSpeechAssessResponse(BaseModel):
     overall_score: int = Field(..., ge=0, le=100)
     metrics: PronunciationMetrics
     words: list[WordAssessment]
+
+
+class LibrarySyllablePreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    syllable_ipa: str
+    stress: Literal["primary", "secondary", "unstressed"] = "unstressed"
+
+
+class LibraryWordPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    word: str
+    expected_ipa: str
+    phonemes: list[str] = Field(default_factory=list)
+    syllables: list[LibrarySyllablePreview] = Field(default_factory=list)
+
+
+class LibraryItemCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(..., min_length=1, max_length=300)
+    item_type: Literal["word", "phrase"] | None = None
+    language: str = Field(default="en")
+    difficulty: Literal["Beginner", "Intermediate", "Advanced"] = "Beginner"
+    category: str = Field(default="Custom")
+    focus_phoneme: str = Field(default="")
+    meaning_or_tip: str = Field(default="")
+
+
+class LibraryItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str | None = None
+    item_type: Literal["word", "phrase"] | None = None
+    language: str | None = None
+    difficulty: Literal["Beginner", "Intermediate", "Advanced"] | None = None
+    category: str | None = None
+    focus_phoneme: str | None = None
+    meaning_or_tip: str | None = None
+
+
+class LibraryItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    text: str
+    item_type: Literal["word", "phrase"]
+    language: str
+    difficulty: str
+    category: str
+    focus_phoneme: str
+    meaning_or_tip: str
+    expected_ipa: str
+    words_breakdown: list[LibraryWordPreview] = Field(default_factory=list)
+    best_score: int = 0
+    attempts_count: int = 0
+    last_practiced_at: str | None = None
+    created_at: str
+
+
+class WeakPhonemeStat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phoneme: str
+    error_count: int
+
+
+class PracticeAttemptSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    item_id: int | None = None
+    reference_text: str
+    language: str
+    overall_score: int
+    accuracy_score: int
+    fluency_score: int
+    prosody_score: int
+    weak_phonemes: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class LibraryStatsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total_items: int
+    words_count: int
+    phrases_count: int
+    practiced_count: int
+    mastered_count: int
+    total_attempts: int
+    average_score: int
+    weak_phonemes: list[WeakPhonemeStat] = Field(default_factory=list)
+    recent_attempts: list[PracticeAttemptSummary] = Field(default_factory=list)

@@ -126,8 +126,8 @@ export function getGameTone(tone: GameTone, isDark: boolean): ToneColors {
 export function useCardColors() {
   const { isDark } = useTheme();
   return isDark
-    ? { face: '#253348', border: '#2E3F5C', shelf: '#1B2638', text: '#F1F5F9', muted: '#94A3B8', surface: '#1E293B' }
-    : { face: '#FFFFFF', border: '#E2E8F0', shelf: '#E2E8F0', text: '#0F172A', muted: '#64748B', surface: '#F8FAFC' };
+    ? { face: '#253348', card: '#253348', border: '#2E3F5C', shelf: '#1B2638', text: '#F1F5F9', muted: '#94A3B8', surface: '#1E293B' }
+    : { face: '#FFFFFF', card: '#FFFFFF', border: '#E2E8F0', shelf: '#E2E8F0', text: '#0F172A', muted: '#64748B', surface: '#F8FAFC' };
 }
 
 export interface RaisedProps {
@@ -221,6 +221,7 @@ export function GameCard({
 /** GTS Academy ChunkyButton: raised button that physically sinks onto its shelf when pressed. */
 export function ChunkyButton({
   label,
+  children,
   onClick,
   tone = 'primary',
   icon,
@@ -228,26 +229,31 @@ export function ChunkyButton({
   loading,
   size = 'md',
   fullWidth,
+  type = 'button',
+  title,
 }: {
-  label: string;
+  label?: string;
+  children?: ReactNode;
   onClick?: () => void;
-  tone?: 'primary' | 'accent' | 'secondary' | 'danger' | 'green';
+  tone?: 'primary' | 'accent' | 'secondary' | 'danger' | 'green' | 'navy' | 'orange' | 'soft' | 'red';
   icon?: ReactNode;
   disabled?: boolean;
   loading?: boolean;
   size?: 'sm' | 'md' | 'lg';
   fullWidth?: boolean;
+  type?: 'button' | 'submit';
+  title?: string;
 }) {
   const { isDark } = useTheme();
   const card = useCardColors();
   const [pressed, setPressed] = useState(false);
 
   const colors =
-    tone === 'accent'
+    tone === 'accent' || tone === 'orange'
       ? getGameTone('orange', isDark)
-      : tone === 'secondary'
+      : tone === 'secondary' || tone === 'soft'
       ? { face: card.face, shelf: card.shelf, fg: isDark ? '#F1F5F9' : '#0F172A' }
-      : tone === 'danger'
+      : tone === 'danger' || tone === 'red'
       ? getGameTone('red', isDark)
       : tone === 'green'
       ? getGameTone('green', isDark)
@@ -257,10 +263,12 @@ export function ChunkyButton({
   const height = size === 'lg' ? 52 : size === 'sm' ? 38 : 46;
   const depth = size === 'sm' ? 3 : 5;
   const sunk = pressed && !muted;
+  const hasContent = Boolean(label || children);
 
   return (
     <button
-      type="button"
+      type={type}
+      title={title}
       disabled={muted}
       onClick={onClick}
       onMouseDown={() => setPressed(true)}
@@ -283,34 +291,27 @@ export function ChunkyButton({
       <Raised
         face={colors.face}
         shelf={colors.shelf}
-        border={tone === 'secondary' ? card.border : undefined}
+        border={tone === 'secondary' || tone === 'soft' ? card.border : undefined}
         radius={size === 'sm' ? 12 : 14}
         depth={sunk ? 0 : depth}
         innerStyle={{
           height,
           minWidth: height,
-          paddingLeft: label ? (size === 'sm' ? 14 : 20) : 0,
-          paddingRight: label ? (size === 'sm' ? 14 : 20) : 0,
+          paddingLeft: hasContent ? (size === 'sm' ? 14 : 20) : 0,
+          paddingRight: hasContent ? (size === 'sm' ? 14 : 20) : 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 8,
+          gap: 7,
+          color: colors.fg,
+          fontSize: size === 'lg' ? 15 : size === 'sm' ? 12 : 13,
+          fontWeight: 900,
+          letterSpacing: 0.3,
+          whiteSpace: 'nowrap',
         }}
       >
         {icon}
-        {label ? (
-          <span
-            style={{
-              color: colors.fg,
-              fontSize: size === 'lg' ? 15 : size === 'sm' ? 12 : 13,
-              fontWeight: 900,
-              letterSpacing: 0.5,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {label.toUpperCase()}
-          </span>
-        ) : null}
+        {label ? label.toUpperCase() : children}
       </Raised>
     </button>
   );
@@ -352,23 +353,43 @@ export function IconTile({
 
 /** Circular SVG Progress Ring matching gts-candidate-app. */
 export function ProgressRing({
-  size,
-  stroke,
+  size = 100,
+  stroke = 10,
   percent,
+  value,
   color,
   trackColor,
+  tone,
+  label,
+  sublabel,
   children,
 }: {
-  size: number;
-  stroke: number;
-  percent: number;
-  color: string;
-  trackColor: string;
+  size?: number;
+  stroke?: number;
+  percent?: number;
+  value?: number;
+  color?: string;
+  trackColor?: string;
+  tone?: GameTone;
+  label?: string;
+  sublabel?: string;
   children?: ReactNode;
 }) {
+  const { isDark } = useTheme();
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = Math.max(0, Math.min(100, percent));
+  const rawPct = typeof percent === 'number' ? percent : typeof value === 'number' ? value : 0;
+  const clamped = Math.max(0, Math.min(100, rawPct));
+  const resolvedColor =
+    color ||
+    (tone === 'green'
+      ? '#16A34A'
+      : tone === 'orange'
+      ? '#F89A1C'
+      : tone === 'red'
+      ? '#DC2626'
+      : '#0D3B84');
+  const resolvedTrack = trackColor || (isDark ? '#1E293B' : '#E2E8F0');
   return (
     <div
       style={{
@@ -390,7 +411,7 @@ export function ProgressRing({
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke={trackColor}
+          stroke={resolvedTrack}
           strokeWidth={stroke}
           fill="none"
         />
@@ -399,7 +420,7 @@ export function ProgressRing({
             cx={size / 2}
             cy={size / 2}
             r={radius}
-            stroke={color}
+            stroke={resolvedColor}
             strokeWidth={stroke}
             fill="none"
             strokeLinecap="round"
@@ -408,7 +429,12 @@ export function ProgressRing({
           />
         )}
       </svg>
-      {children}
+      {children || (
+        <div style={{ textAlign: 'center' }}>
+          {label && <div style={{ fontSize: 22, fontWeight: 900 }}>{label}</div>}
+          {sublabel && <div style={{ fontSize: 10, fontWeight: 800, opacity: 0.7 }}>{sublabel}</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -422,16 +448,19 @@ const PILL_TONES = {
   purple: { light: ['#EDE9FE', '#5B21B6'], dark: ['#2E1065', '#C4B5FD'] },
   amber: { light: ['#FEF3C7', '#92400E'], dark: ['#3B2A0E', '#FCD34D'] },
   slate: { light: ['#F1F5F9', '#334155'], dark: ['#1E293B', '#CBD5E1'] },
+  gray: { light: ['#F1F5F9', '#334155'], dark: ['#1E293B', '#CBD5E1'] },
 } as const;
 
 export type PillTone = keyof typeof PILL_TONES;
 
 export function Pill({
   label,
+  children,
   tone = 'slate',
   icon,
 }: {
-  label: string;
+  label?: string;
+  children?: ReactNode;
   tone?: PillTone;
   icon?: ReactNode;
 }) {
@@ -454,7 +483,7 @@ export function Pill({
       }}
     >
       {icon}
-      {label.toUpperCase()}
+      {label ? label.toUpperCase() : children}
     </span>
   );
 }
@@ -466,16 +495,18 @@ export function StatTile({
   label,
 }: {
   tone: GameTone;
-  icon: ReactNode;
+  icon?: ReactNode;
   value: string;
   label: string;
 }) {
   const card = useCardColors();
   return (
     <GameCard innerStyle={{ padding: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
-      <IconTile tone={tone} size={42} depth={3}>
-        {icon}
-      </IconTile>
+      {icon && (
+        <IconTile tone={tone} size={42} depth={3}>
+          {icon}
+        </IconTile>
+      )}
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 20, fontWeight: 900, color: card.text, lineHeight: 1.15 }}>
           {value}

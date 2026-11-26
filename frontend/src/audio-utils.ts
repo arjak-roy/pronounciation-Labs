@@ -134,17 +134,28 @@ export function playVictoryChime(isThreeStar: boolean): void {
 }
 
 /** Trigger a celebration confetti burst on 3-star clears. */
-export function launchConfetti(canvas: HTMLCanvasElement | null): void {
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
+export function launchConfetti(canvas?: HTMLCanvasElement | null): void {
+  let targetCanvas = canvas;
+  let createdTemp = false;
+  if (!targetCanvas && typeof document !== 'undefined') {
+    targetCanvas = document.createElement('canvas');
+    targetCanvas.style.position = 'fixed';
+    targetCanvas.style.inset = '0';
+    targetCanvas.style.pointerEvents = 'none';
+    targetCanvas.style.zIndex = '9999';
+    document.body.appendChild(targetCanvas);
+    createdTemp = true;
+  }
+  if (!targetCanvas) return;
+  const ctx = targetCanvas.getContext('2d');
   if (!ctx) return;
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  targetCanvas.width = window.innerWidth;
+  targetCanvas.height = window.innerHeight;
 
   const colors = ['#0D3B84', '#F89A1C', '#16A34A', '#38BDF8', '#A855F7'];
   const particles = Array.from({ length: 75 }, () => ({
-    x: canvas.width / 2 + (Math.random() - 0.5) * 260,
-    y: canvas.height * 0.35,
+    x: targetCanvas!.width / 2 + (Math.random() - 0.5) * 260,
+    y: targetCanvas!.height * 0.35,
     vx: (Math.random() - 0.5) * 14,
     vy: -Math.random() * 12 - 4,
     size: Math.random() * 8 + 5,
@@ -156,7 +167,7 @@ export function launchConfetti(canvas: HTMLCanvasElement | null): void {
   let frame = 0;
   function step() {
     frame++;
-    ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+    ctx!.clearRect(0, 0, targetCanvas!.width, targetCanvas!.height);
     particles.forEach((p) => {
       p.x += p.vx;
       p.y += p.vy;
@@ -170,7 +181,12 @@ export function launchConfetti(canvas: HTMLCanvasElement | null): void {
       ctx!.restore();
     });
     if (frame < 95) requestAnimationFrame(step);
-    else ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+    else {
+      ctx!.clearRect(0, 0, targetCanvas!.width, targetCanvas!.height);
+      if (createdTemp && targetCanvas?.parentNode) {
+        targetCanvas.parentNode.removeChild(targetCanvas);
+      }
+    }
   }
   step();
 }

@@ -103,6 +103,12 @@ class Settings(BaseSettings):
         default=True, validation_alias="MODE_B_TRIM_SILENCE"
     )
 
+    # --- SQLite Word & Phrase Library Database ---
+    database_path: Path = Field(
+        default=Path("data/pronunciation_lab.db"),
+        validation_alias="DATABASE_PATH",
+    )
+
     # --- Optional Custom espeak-ng Library Override ---
     espeak_library_path: str | None = Field(
         default=None, validation_alias="ESPEAK_LIBRARY_PATH"

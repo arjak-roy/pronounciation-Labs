@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/audio-utils.ts","./src/game-ui.tsx","./src/main.tsx"],"version":"5.8.3"}
+{"root":["./src/app.tsx","./src/audio-utils.ts","./src/game-ui.tsx","./src/library-data.ts","./src/main.tsx"],"version":"5.8.3"}

@@ -20,9 +20,17 @@ from app.acoustic_model import BaseAcousticEngine
 from app.aligner_gop import ForcedAlignerGOP
 from app.audio_utils import load_and_normalize_audio, split_at_breath_pauses
 from app.config import Settings
+from app.db import PronunciationLibraryDB
 from app.g2p import G2PService
 from app.prosody import analyze_connected_speech, compute_pronunciation_metrics
-from app.schemas import FreeSpeechAssessResponse, PronunciationAssessResponse
+from app.schemas import (
+    FreeSpeechAssessResponse,
+    LibraryItemCreate,
+    LibraryItemResponse,
+    LibraryItemUpdate,
+    LibraryStatsResponse,
+    PronunciationAssessResponse,
+)
 from app.stt_engines import BaseSTTEngine
 
 router = APIRouter()
@@ -73,6 +81,7 @@ async def health_check(request: Request) -> dict[str, object]:
     )
     stt_engine: BaseSTTEngine | None = getattr(request.app.state, "stt_engine", None)
     g2p: G2PService | None = getattr(request.app.state, "g2p", None)
+    library_db: PronunciationLibraryDB | None = getattr(request.app.state, "library_db", None)
     return {
         "status": "ok",
         "mode_a": {
@@ -88,7 +97,99 @@ async def health_check(request: Request) -> dict[str, object]:
             "provider": acoustic_engine.active_provider if acoustic_engine else None,
             "vocab_size": len(g2p.vocab) if g2p else 0,
         },
+        "library_db": {
+            "ready": library_db is not None,
+            "path": str(settings.database_path),
+        },
     }
+
+
+def _require_library_db(request: Request) -> PronunciationLibraryDB:
+    library_db: PronunciationLibraryDB | None = getattr(request.app.state, "library_db", None)
+    if library_db is None:
+        raise HTTPException(status_code=503, detail="Library database not initialized.")
+    return library_db
+
+
+@router.get(
+    "/api/v1/library/items",
+    response_model=list[LibraryItemResponse],
+    summary="List Words & Phrases from the SQLite Library",
+)
+async def list_library_items(
+    request: Request,
+    language: str | None = None,
+    item_type: str | None = None,
+    difficulty: str | None = None,
+    category: str | None = None,
+    search: str | None = None,
+) -> list[LibraryItemResponse]:
+    db = _require_library_db(request)
+    return db.list_items(
+        language=language,
+        item_type=item_type,
+        difficulty=difficulty,
+        category=category,
+        search=search,
+    )
+
+
+@router.post(
+    "/api/v1/library/items",
+    response_model=LibraryItemResponse,
+    summary="Create a Word or Phrase with Automatic espeak-ng IPA & Syllable Breakdown",
+)
+async def create_library_item(
+    request: Request,
+    payload: LibraryItemCreate,
+) -> LibraryItemResponse:
+    db = _require_library_db(request)
+    return db.create_item(payload)
+
+
+@router.put(
+    "/api/v1/library/items/{item_id}",
+    response_model=LibraryItemResponse,
+    summary="Update a Word or Phrase in the Library",
+)
+async def update_library_item(
+    request: Request,
+    item_id: int,
+    payload: LibraryItemUpdate,
+) -> LibraryItemResponse:
+    db = _require_library_db(request)
+    updated = db.update_item(item_id, payload)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Library item not found.")
+    return updated
+
+
+@router.delete(
+    "/api/v1/library/items/{item_id}",
+    summary="Delete a Word or Phrase from the Library",
+)
+async def delete_library_item(
+    request: Request,
+    item_id: int,
+) -> dict[str, object]:
+    db = _require_library_db(request)
+    deleted = db.delete_item(item_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Library item not found.")
+    return {"deleted": True, "id": item_id}
+
+
+@router.get(
+    "/api/v1/library/stats",
+    response_model=LibraryStatsResponse,
+    summary="Learner Progress, Weak Phonemes & Attempt History",
+)
+async def get_library_stats(
+    request: Request,
+    language: str | None = None,
+) -> LibraryStatsResponse:
+    db = _require_library_db(request)
+    return db.get_stats(language=language)
 
 
 async def _score_samples_against_text(
@@ -196,7 +297,7 @@ async def _handle_pronunciation_assess(
             detail="Uploaded audio clip is too short (< 80ms of active speech).",
         )
 
-    return await _score_samples_against_text(
+    result = await _score_samples_against_text(
         settings=settings,
         acoustic_engine=acoustic_engine,
         g2p=g2p,
@@ -206,6 +307,32 @@ async def _handle_pronunciation_assess(
         reference_text=reference_text,
         language=language,
     )
+
+    library_db: PronunciationLibraryDB | None = getattr(request.app.state, "library_db", None)
+    if library_db is not None:
+        weak_phonemes: list[str] = []
+        for w in result.words:
+            for p in w.phonemes:
+                if p.error is not None and p.expected:
+                    weak_phonemes.append(p.expected)
+        parsed_item_id: int | None = None
+        if sentence_id and sentence_id.isdigit():
+            parsed_item_id = int(sentence_id)
+        try:
+            library_db.record_attempt(
+                reference_text=reference_text,
+                language=language,
+                overall_score=result.overall_score,
+                accuracy_score=result.metrics.accuracy,
+                fluency_score=result.metrics.fluency,
+                prosody_score=result.metrics.prosody_similarity,
+                weak_phonemes=weak_phonemes,
+                item_id=parsed_item_id,
+            )
+        except Exception:
+            pass
+
+    return result
 
 
 @router.post(
