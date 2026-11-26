@@ -319,6 +319,7 @@ export default function App() {
   // --- Mode A: Real-Time Live STT (faster-whisper-small) State ---
   const [isLiveSttStreaming, setIsLiveSttStreaming] = useState<boolean>(false);
   const [isSttRecordingClip, setIsSttRecordingClip] = useState<boolean>(false);
+  const [vadVoiceActive, setVadVoiceActive] = useState<boolean>(false);
   const [liveSttInterim, setLiveSttInterim] = useState<string>('');
   const [liveSttFinalList, setLiveSttFinalList] = useState<string[]>([]);
   const [liveSttConfidence, setLiveSttConfidence] = useState<number | null>(null);
@@ -1190,34 +1191,101 @@ export default function App() {
       };
 
       const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(2048, 1, 1);
+      const processor = ctx.createScriptProcessor(1024, 1, 1);
       let accChunks: Float32Array[] = [];
       let accSamples = 0;
+      let preRollRing: Float32Array[] = [];
+      let speechActive = false;
+      let silenceSamplesSinceSpeech = 0;
+      let noiseFloor = 0.005;
+
+      const sendPcmFloat32 = (floatSamples: Float32Array) => {
+        if (ws.readyState !== WebSocket.OPEN || floatSamples.length === 0) return;
+        const pcm16 = new Int16Array(floatSamples.length);
+        for (let i = 0; i < floatSamples.length; i++) {
+          const s = Math.max(-1, Math.min(1, floatSamples[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        ws.send(pcm16.buffer);
+      };
 
       processor.onaudioprocess = (e) => {
         if (!isLiveSttRef.current) return;
         const ch = new Float32Array(e.inputBuffer.getChannelData(0));
-        liveSttChunksRef.current.push(ch);
 
         let sum = 0;
-        for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+        let zc = 0;
+        for (let i = 0; i < ch.length; i++) {
+          sum += ch[i] * ch[i];
+          if (i > 0 && ch[i] >= 0 !== ch[i - 1] >= 0) zc++;
+        }
         const rms = Math.sqrt(sum / ch.length);
-        setLiveMicLevel(Math.min(100, Math.round(rms * 420)));
+        const zcr = zc / ch.length;
+        setLiveMicLevel(Math.min(100, Math.round(rms * 450)));
+
+        // Adaptive client-side VAD threshold
+        if (!speechActive && rms < noiseFloor * 1.7) {
+          noiseFloor = Math.max(0.0025, Math.min(0.016, 0.92 * noiseFloor + 0.08 * rms));
+        }
+        const vadThreshold = Math.max(0.011, noiseFloor * 2.5);
+        const isSpeechFrame = rms >= vadThreshold && zcr < 0.42;
 
         const ds16k = downsampleBuffer(ch, inRate, 16000);
-        accChunks.push(ds16k);
-        accSamples += ds16k.length;
 
-        if (accSamples >= 2400 && ws.readyState === WebSocket.OPEN) {
-          const merged16k = mergeBuffers(accChunks);
-          accChunks = [];
-          accSamples = 0;
-          const pcm16 = new Int16Array(merged16k.length);
-          for (let i = 0; i < merged16k.length; i++) {
-            const s = Math.max(-1, Math.min(1, merged16k[i]));
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        if (isSpeechFrame) {
+          setVadVoiceActive(true);
+          // Only record active speech into the local audio buffer (strips dead air!)
+          if (!speechActive && preRollRing.length > 0) {
+            const preRoll = mergeBuffers(preRollRing);
+            preRollRing = [];
+            liveSttChunksRef.current.push(preRoll);
+            sendPcmFloat32(preRoll);
           }
-          ws.send(pcm16.buffer);
+          speechActive = true;
+          silenceSamplesSinceSpeech = 0;
+          liveSttChunksRef.current.push(ds16k);
+          accChunks.push(ds16k);
+          accSamples += ds16k.length;
+
+          // Stream every 80ms (1280 samples @ 16kHz) for ultra-low-latency live transcription
+          if (accSamples >= 1280) {
+            const merged16k = mergeBuffers(accChunks);
+            accChunks = [];
+            accSamples = 0;
+            sendPcmFloat32(merged16k);
+          }
+        } else if (speechActive) {
+          silenceSamplesSinceSpeech += ds16k.length;
+          liveSttChunksRef.current.push(ds16k);
+          accChunks.push(ds16k);
+          accSamples += ds16k.length;
+
+          if (accSamples >= 1280) {
+            const merged16k = mergeBuffers(accChunks);
+            accChunks = [];
+            accSamples = 0;
+            sendPcmFloat32(merged16k);
+          }
+
+          // After ~380ms of silence (6080 samples @ 16kHz), flush the utterance immediately
+          if (silenceSamplesSinceSpeech >= 6080) {
+            if (accSamples > 0) {
+              sendPcmFloat32(mergeBuffers(accChunks));
+              accChunks = [];
+              accSamples = 0;
+            }
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'flush' }));
+            }
+            speechActive = false;
+            silenceSamplesSinceSpeech = 0;
+            setVadVoiceActive(false);
+          }
+        } else {
+          // Pure silence: keep a rolling ~160ms pre-roll ring buffer and drop silent packets
+          setVadVoiceActive(false);
+          preRollRing.push(ds16k);
+          if (preRollRing.length > 5) preRollRing.shift();
         }
       };
 
@@ -1239,6 +1307,7 @@ export default function App() {
     if (!isLiveSttRef.current) return;
     isLiveSttRef.current = false;
     setIsLiveSttStreaming(false);
+    setVadVoiceActive(false);
     setLiveMicLevel(0);
     triggerTone(440, 0.07);
 
@@ -1257,10 +1326,9 @@ export default function App() {
       } catch {}
     }
 
-    const merged = mergeBuffers(liveSttChunksRef.current);
-    if (merged.length < 1600) return;
-    const ds16k = downsampleBuffer(merged, inRate, 16000);
-    const trimmed = trimSilenceClientSide(ds16k, 16000);
+    const merged16k = mergeBuffers(liveSttChunksRef.current);
+    if (merged16k.length < 1600) return;
+    const trimmed = trimSilenceClientSide(merged16k, 16000);
     recordedSamplesRef.current = trimmed;
     const wavBlob = encodeMono16kWav(trimmed, 16000);
     if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
@@ -2732,8 +2800,13 @@ export default function App() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {isLiveSttStreaming && (
+                <Pill tone={vadVoiceActive ? 'green' : 'slate'}>
+                  {vadVoiceActive ? '🟢 VAD: Voice Active' : '⚪ VAD: Filtering Silence'}
+                </Pill>
+              )}
               <Pill tone={modeAReady ? 'green' : 'orange'}>
-                {modeAReady ? '🟢 faster-whisper-small Ready' : '⚡ Whisper STT'}
+                {modeAReady ? '🟢 Whisper + Silero VAD' : '⚡ Whisper STT'}
               </Pill>
               <select
                 value={selectedLang === 'all' ? 'de' : selectedLang}

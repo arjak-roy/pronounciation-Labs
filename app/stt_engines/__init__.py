@@ -81,9 +81,9 @@ class StreamingSTTSession:
         engine: BaseSTTEngine,
         language: str = "en",
         sample_rate: int = 16000,
-        interim_interval_sec: float = 0.35,
-        silence_endpoint_sec: float = 0.55,
-        max_utterance_sec: float = 15.0,
+        interim_interval_sec: float = 0.18,
+        silence_endpoint_sec: float = 0.38,
+        max_utterance_sec: float = 4.2,
     ) -> None:
         self.engine = engine
         self.language = language
@@ -98,6 +98,24 @@ class StreamingSTTSession:
         self._has_active_speech = False
         self._last_interim_text = ""
         self._interim_in_flight = False
+        self._noise_floor_rms = 0.004
+
+    def _is_speech_frame(self, chunk_f32: np.ndarray) -> bool:
+        """
+        Fast adaptive VAD combining RMS energy above dynamic noise floor
+        with zero-crossing rate check to reject high-frequency clicks/hiss.
+        """
+        rms = float(np.sqrt(np.mean(chunk_f32 * chunk_f32) + 1e-12))
+        if not self._has_active_speech and rms < self._noise_floor_rms * 1.8:
+            self._noise_floor_rms = float(
+                np.clip(0.92 * self._noise_floor_rms + 0.08 * rms, 0.002, 0.018)
+            )
+        thresh = max(0.009, self._noise_floor_rms * 2.4)
+        if rms < thresh:
+            return False
+        signs = np.signbit(chunk_f32)
+        zcr = float(np.mean(signs[1:] != signs[:-1])) if chunk_f32.size > 1 else 0.0
+        return zcr < 0.42
 
     async def ingest_pcm16_bytes(self, pcm16_bytes: bytes) -> list[TranscribeEvent]:
         """Process a binary frame of 16kHz 16-bit mono PCM and return 0 or more TranscribeEvents."""
@@ -108,8 +126,7 @@ class StreamingSTTSession:
         pcm16 = np.frombuffer(pcm16_bytes[:usable_len], dtype=np.int16)
         chunk_f32 = pcm16.astype(np.float32) / 32768.0
 
-        rms = float(np.sqrt(np.mean(chunk_f32 * chunk_f32) + 1e-12))
-        is_voiced = rms >= 0.012
+        is_voiced = self._is_speech_frame(chunk_f32)
 
         events: list[TranscribeEvent] = []
 
@@ -121,13 +138,13 @@ class StreamingSTTSession:
         elif self._has_active_speech:
             # Keep a short trailing context for clean final consonant decoding
             self._trailing_silent_samples += len(chunk_f32)
-            if self._trailing_silent_samples <= int(0.35 * self.sample_rate):
+            if self._trailing_silent_samples <= int(0.24 * self.sample_rate):
                 self._buffer = np.concatenate([self._buffer, chunk_f32])
         else:
             # Pure silence before speech starts -> drop frame (Mandatory Optimization #4)
             return []
 
-        # Check if we hit natural breath/utterance end OR 15-second max window
+        # Check if we hit natural breath/utterance end OR max sliding phrase window
         if self._has_active_speech and (
             self._trailing_silent_samples >= self.silence_endpoint_samples
             or len(self._buffer) >= self.max_utterance_samples
@@ -142,13 +159,13 @@ class StreamingSTTSession:
             self._has_active_speech
             and not self._interim_in_flight
             and self._samples_since_last_interim >= self.interim_step_samples
-            and len(self._buffer) >= int(0.28 * self.sample_rate)
+            and len(self._buffer) >= int(0.18 * self.sample_rate)
         ):
             self._samples_since_last_interim = 0
             self._interim_in_flight = True
             try:
-                # Cap rolling interim window to latest 6s so latency stays ultra-low
-                window = self._buffer[-int(6.0 * self.sample_rate) :]
+                # Cap rolling interim window to latest 3.0s so CPU Whisper decodes in ~150-250ms
+                window = self._buffer[-int(3.0 * self.sample_rate) :]
                 text, conf = await self.engine.transcribe_async(window, self.language)
             finally:
                 self._interim_in_flight = False

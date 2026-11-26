@@ -206,6 +206,7 @@ class SherpaCpuEngine(BaseSTTEngine):
 
         if self._whisper is not None:
             iso_lang = STT_LANG_MAP.get(language.lower(), "de")
+            use_silero_vad = waveform_1d.size >= 8000
             segments, _ = self._whisper.transcribe(
                 waveform_1d,
                 language=iso_lang,
@@ -213,12 +214,23 @@ class SherpaCpuEngine(BaseSTTEngine):
                 best_of=1,
                 temperature=0.0,
                 condition_on_previous_text=False,
-                vad_filter=False,
+                vad_filter=use_silero_vad,
+                vad_parameters=dict(
+                    threshold=0.42,
+                    min_speech_duration_ms=110,
+                    min_silence_duration_ms=250,
+                    speech_pad_ms=90,
+                ),
+                no_speech_threshold=0.55,
+                log_prob_threshold=-1.0,
+                compression_ratio_threshold=2.2,
                 without_timestamps=True,
             )
             texts: list[str] = []
             probs: list[float] = []
             for seg in segments:
+                if getattr(seg, "no_speech_prob", 0.0) > 0.68:
+                    continue
                 t = seg.text.strip()
                 if t:
                     texts.append(t)
