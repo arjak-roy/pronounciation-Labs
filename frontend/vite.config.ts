@@ -10,11 +10,13 @@ export default defineConfig({
         target: 'https://18-234-54-50.nip.io',
         changeOrigin: true,
         secure: true,
+        ws: true,
         rewrite: (path) => path.replace(/^\/aws-api/, ''),
       },
       '/local-api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        ws: true,
         rewrite: (path) => path.replace(/^\/local-api/, ''),
       },
       '/characters': {

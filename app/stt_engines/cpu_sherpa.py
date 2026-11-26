@@ -7,7 +7,7 @@ import numpy as np
 import sherpa_onnx
 
 from app.schemas import TranscribeEvent
-from app.stt_engines import BaseSTTEngine, StreamingSTTSession
+from app.stt_engines import STT_LANG_MAP, BaseSTTEngine, StreamingSTTSession
 
 logger = logging.getLogger("voice_pronunciation_engine.mode_a_sherpa")
 
@@ -109,6 +109,8 @@ class SherpaCpuEngine(BaseSTTEngine):
         sherpa_dir: Path = Path("models/sherpa-en"),
         fallback_whisper_model: str = "Systran/faster-whisper-small",
         cpu_threads: int = 2,
+        force_whisper: bool = False,
+        download_root: Path | None = None,
     ) -> None:
         self.sherpa_dir = sherpa_dir
         self.cpu_threads = cpu_threads
@@ -119,7 +121,13 @@ class SherpaCpuEngine(BaseSTTEngine):
         joiner_path = sherpa_dir / "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx"
         tokens_path = sherpa_dir / "tokens.txt"
 
-        if encoder_path.exists() and decoder_path.exists() and joiner_path.exists() and tokens_path.exists():
+        if (
+            not force_whisper
+            and encoder_path.exists()
+            and decoder_path.exists()
+            and joiner_path.exists()
+            and tokens_path.exists()
+        ):
             logger.info("Loading Sherpa-ONNX Streaming Zipformer INT8 from %s ...", sherpa_dir)
             self._recognizer: sherpa_onnx.OnlineRecognizer | None = (
                 sherpa_onnx.OnlineRecognizer.from_transducer(
@@ -141,13 +149,21 @@ class SherpaCpuEngine(BaseSTTEngine):
         else:
             from faster_whisper import WhisperModel
 
-            logger.info("Sherpa-ONNX files not found; loading faster-whisper (%s)...", fallback_whisper_model)
+            cache_dir = download_root or Path("models/whisper")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(
+                "Loading multilingual faster-whisper INT8 (%s) on CPU (threads=%d, cache=%s)...",
+                fallback_whisper_model,
+                cpu_threads,
+                cache_dir,
+            )
             self._recognizer = None
             self._whisper = WhisperModel(
                 fallback_whisper_model,
                 device="cpu",
                 compute_type="int8",
                 cpu_threads=cpu_threads,
+                download_root=str(cache_dir),
             )
 
     @property
@@ -187,9 +203,10 @@ class SherpaCpuEngine(BaseSTTEngine):
             return text, (0.95 if text else 0.0)
 
         if self._whisper is not None:
+            iso_lang = STT_LANG_MAP.get(language.lower(), "de")
             segments, _ = self._whisper.transcribe(
                 waveform_1d,
-                language="en",
+                language=iso_lang,
                 beam_size=1,
                 best_of=1,
                 temperature=0.0,
@@ -197,7 +214,15 @@ class SherpaCpuEngine(BaseSTTEngine):
                 vad_filter=False,
                 without_timestamps=True,
             )
-            texts = [seg.text.strip() for seg in segments if seg.text.strip()]
-            return " ".join(texts), (0.90 if texts else 0.0)
+            texts: list[str] = []
+            probs: list[float] = []
+            for seg in segments:
+                t = seg.text.strip()
+                if t:
+                    texts.append(t)
+                    probs.append(float(np.clip(np.exp(seg.avg_logprob), 0.1, 0.99)))
+            if not texts:
+                return "", 0.0
+            return " ".join(texts), round(float(np.mean(probs)), 2)
 
         return "", 0.0

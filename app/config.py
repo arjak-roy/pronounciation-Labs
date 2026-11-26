@@ -17,15 +17,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Mode A: Real-Time Live STT (Disabled by default; enable via MODE_A_ENABLED=true) ---
+    # --- Mode A: Real-Time Live STT (faster-whisper-small INT8 by default) ---
     mode_a_enabled: bool = Field(
-        default=False, validation_alias="MODE_A_ENABLED"
+        default=True, validation_alias="MODE_A_ENABLED"
     )
     mode_a_device: Literal["cpu", "gpu"] = Field(
         default="cpu", validation_alias="MODE_A_DEVICE"
     )
     mode_a_engine: Literal["sherpa", "vosk", "qwen", "whisper"] = Field(
-        default="sherpa", validation_alias="MODE_A_ENGINE"
+        default="whisper", validation_alias="MODE_A_ENGINE"
     )
     mode_a_sherpa_dir: Path = Field(
         default=Path("models/sherpa-en"),
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         validation_alias="MODE_A_GPU_MODEL",
     )
     mode_a_cpu_threads: int = Field(
-        default=4, validation_alias="MODE_A_CPU_THREADS"
+        default=2, validation_alias="MODE_A_CPU_THREADS"
     )
 
     # --- Mode B: On-Demand Pronunciation Engine ---

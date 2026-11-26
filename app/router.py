@@ -450,6 +450,7 @@ async def assess_free_speech(
         overall_score=assessed.overall_score,
         metrics=assessed.metrics,
         words=assessed.words,
+        connected_speech=assessed.connected_speech,
     )
 
 

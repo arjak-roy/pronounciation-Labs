@@ -149,6 +149,9 @@ class FreeSpeechAssessResponse(BaseModel):
     overall_score: int = Field(..., ge=0, le=100)
     metrics: PronunciationMetrics
     words: list[WordAssessment]
+    connected_speech: ConnectedSpeechReport | None = Field(
+        default=None, description="Connected speech linking and intonation contour report"
+    )
 
 
 class LibrarySyllablePreview(BaseModel):

@@ -140,7 +140,7 @@ interface AssessResponse {
   connected_speech?: ConnectedSpeechReport | null;
 }
 
-type MainTab = 'practice' | 'library' | 'progress';
+type MainTab = 'practice' | 'livestt' | 'library' | 'progress';
 type ApiTarget = 'aws' | 'local';
 
 const CHARACTERS = [
@@ -316,6 +316,16 @@ export default function App() {
   const myVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const myVoiceTimerRef = useRef<number | null>(null);
 
+  // --- Mode A: Real-Time Live STT (faster-whisper-small) State ---
+  const [isLiveSttStreaming, setIsLiveSttStreaming] = useState<boolean>(false);
+  const [liveSttInterim, setLiveSttInterim] = useState<string>('');
+  const [liveSttFinalList, setLiveSttFinalList] = useState<string[]>([]);
+  const [liveSttConfidence, setLiveSttConfidence] = useState<number | null>(null);
+  const [modeAReady, setModeAReady] = useState<boolean>(false);
+  const liveSttWsRef = useRef<WebSocket | null>(null);
+  const liveSttChunksRef = useRef<Float32Array[]>([]);
+  const isLiveSttRef = useRef<boolean>(false);
+
   // --- Learner Gamification State ---
   const [xp, setXp] = useState<number>(() => Number(localStorage.getItem('gts_xp') || '120'));
   const [streak, setStreak] = useState<number>(() => Number(localStorage.getItem('gts_streak') || '2'));
@@ -383,8 +393,10 @@ export default function App() {
       if (hRes.ok) {
         const hData = await hRes.json();
         setServerOnline(Boolean(hData?.mode_b?.ready));
+        setModeAReady(Boolean(hData?.mode_a?.ready));
       } else {
         setServerOnline(false);
+        setModeAReady(false);
       }
     } catch {
       setServerOnline(false);
@@ -937,6 +949,182 @@ export default function App() {
     await submitAudioForAssessment(file, file.name);
   };
 
+  // --- Mode A: Real-Time Live STT Streaming (faster-whisper-small) + Free-Speech Scoring ---
+  const buildWsUrl = (lang: string): string => {
+    const cleanLang = lang === 'all' ? 'de' : lang;
+    if (typeof window === 'undefined') return '';
+    if (apiBase.startsWith('http://') || apiBase.startsWith('https://')) {
+      const wsBase = apiBase.replace(/^http/, 'ws');
+      return `${wsBase}/ws/transcribe?lang=${encodeURIComponent(cleanLang)}`;
+    }
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}${apiBase}/ws/transcribe?lang=${encodeURIComponent(cleanLang)}`;
+  };
+
+  const startLiveSttStream = async () => {
+    try {
+      setErrorMsg(null);
+      setLiveSttInterim('');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const inRate = ctx.sampleRate;
+      liveSttChunksRef.current = [];
+
+      const wsUrl = buildWsUrl(selectedLang);
+      const ws = new WebSocket(wsUrl);
+      liveSttWsRef.current = ws;
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.error) {
+            setErrorMsg(msg.error);
+            return;
+          }
+          if (msg.type === 'interim') {
+            setLiveSttInterim(msg.transcript || '');
+            if (typeof msg.confidence === 'number') setLiveSttConfidence(msg.confidence);
+          } else if (msg.type === 'final' && msg.transcript) {
+            setLiveSttFinalList((prev) => [...prev, msg.transcript]);
+            setLiveSttInterim('');
+            if (typeof msg.confidence === 'number') setLiveSttConfidence(msg.confidence);
+          }
+        } catch {}
+      };
+
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
+      let accChunks: Float32Array[] = [];
+      let accSamples = 0;
+
+      processor.onaudioprocess = (e) => {
+        if (!isLiveSttRef.current) return;
+        const ch = new Float32Array(e.inputBuffer.getChannelData(0));
+        liveSttChunksRef.current.push(ch);
+
+        let sum = 0;
+        for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+        const rms = Math.sqrt(sum / ch.length);
+        setLiveMicLevel(Math.min(100, Math.round(rms * 420)));
+
+        const ds16k = downsampleBuffer(ch, inRate, 16000);
+        accChunks.push(ds16k);
+        accSamples += ds16k.length;
+
+        if (accSamples >= 2400 && ws.readyState === WebSocket.OPEN) {
+          const merged16k = mergeBuffers(accChunks);
+          accChunks = [];
+          accSamples = 0;
+          const pcm16 = new Int16Array(merged16k.length);
+          for (let i = 0; i < merged16k.length; i++) {
+            const s = Math.max(-1, Math.min(1, merged16k[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          ws.send(pcm16.buffer);
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(ctx.destination);
+
+      mediaStreamRef.current = stream;
+      audioCtxRef.current = ctx;
+      processorRef.current = processor;
+      isLiveSttRef.current = true;
+      setIsLiveSttStreaming(true);
+      triggerTone(660, 0.07);
+    } catch (err: any) {
+      setErrorMsg(`Microphone error: ${err?.message || 'Please allow microphone access'}`);
+    }
+  };
+
+  const stopLiveSttStream = async (andScorePronunciation = false) => {
+    if (!isLiveSttRef.current) return;
+    isLiveSttRef.current = false;
+    setIsLiveSttStreaming(false);
+    setLiveMicLevel(0);
+    triggerTone(440, 0.07);
+
+    const inRate = audioCtxRef.current?.sampleRate || 48000;
+    if (processorRef.current) processorRef.current.disconnect();
+    if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+    if (audioCtxRef.current) {
+      try {
+        await audioCtxRef.current.close();
+      } catch {}
+    }
+
+    if (liveSttWsRef.current && liveSttWsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        liveSttWsRef.current.send(JSON.stringify({ type: 'close' }));
+      } catch {}
+    }
+
+    const merged = mergeBuffers(liveSttChunksRef.current);
+    if (merged.length < 1600) return;
+    const ds16k = downsampleBuffer(merged, inRate, 16000);
+    const trimmed = trimSilenceClientSide(ds16k, 16000);
+    recordedSamplesRef.current = trimmed;
+    const wavBlob = encodeMono16kWav(trimmed, 16000);
+    if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+    setRecordedAudioUrl(URL.createObjectURL(wavBlob));
+
+    if (andScorePronunciation) {
+      setIsAnalyzing(true);
+      setErrorMsg(null);
+      const t0 = performance.now();
+      try {
+        const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+        const fd = new FormData();
+        fd.append('audio', wavBlob, 'free_speech_16k.wav');
+        fd.append('language', cleanLang);
+
+        const res = await fetch(`${apiBase}/api/v1/pronunciation/free-assess`, {
+          method: 'POST',
+          body: fd,
+        });
+        const elapsed = Math.round(performance.now() - t0);
+        setLatencyMs(elapsed);
+
+        const minWait = Math.max(0, 750 - (performance.now() - t0));
+        if (minWait > 0) {
+          await new Promise((r) => window.setTimeout(r, minWait));
+        }
+
+        const data = await res.json();
+        if (res.ok && data.detected_transcript) {
+          setLiveSttFinalList([data.detected_transcript]);
+          setLiveSttInterim('');
+          if (typeof data.stt_confidence === 'number') {
+            setLiveSttConfidence(data.stt_confidence);
+          }
+          setReferenceText(data.detected_transcript);
+          setAssessResult({
+            overall_score: data.overall_score,
+            metrics: data.metrics,
+            words: data.words,
+            connected_speech: data.connected_speech || computeClientConnectedSpeech(data.words),
+          });
+          setShowResultPopup(true);
+        } else {
+          const fallbackText = [...liveSttFinalList, liveSttInterim].join(' ').trim();
+          if (fallbackText) {
+            setReferenceText(fallbackText);
+            await submitAudioForAssessment(wavBlob, 'free_speech_16k.wav');
+          } else {
+            setErrorMsg(data?.detail || 'No clear speech detected. Please speak slightly louder.');
+          }
+        }
+      } catch (err: any) {
+        setErrorMsg(`Free-speech scoring error: ${err?.message || 'Unable to score audio'}`);
+      } finally {
+        setIsAnalyzing(false);
+      }
+    }
+  };
+
   // --- Submit Audio to Mode B Pronunciation Engine ---
   const submitAudioForAssessment = async (blob: Blob, filename: string) => {
     const cleanRef = referenceText.trim();
@@ -1121,7 +1309,7 @@ export default function App() {
         }}
       >
         <div className="tv-appbar-inner">
-          {/* Compact Brand */}
+          {/* Compact Brand + Always-Accessible Language Selector */}
           <div className="tv-brand-compact">
             <IconTile tone="navy" size={34} depth={3}>
               <Mic size={17} />
@@ -1149,22 +1337,37 @@ export default function App() {
                   }}
                 />
               </div>
-              <div
+              <select
+                value={selectedLang === 'all' ? 'de' : selectedLang}
+                onChange={(e) => {
+                  const newLang = e.target.value;
+                  setSelectedLang(newLang);
+                  const firstForLang = libraryItems.find((i) => i.language === newLang);
+                  if (firstForLang) selectLibraryItemForPractice(firstForLang);
+                }}
+                title="Select Practice & Live STT Language"
                 style={{
-                  fontSize: 10.5,
-                  color: c.muted,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  marginTop: 1,
+                  padding: '1px 4px',
+                  borderRadius: 6,
+                  border: `1px solid ${c.border}`,
+                  background: c.surface,
+                  color: c.text,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  cursor: 'pointer',
                 }}
               >
-                {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.flag || '🇩🇪'}{' '}
-                {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'}
-              </div>
+                {LANGUAGE_OPTIONS.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.flag} {l.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* Zero-Overflow 3-Tab Segmented Ribbon */}
+          {/* Zero-Overflow 4-Tab Segmented Ribbon */}
           <nav
             className="tv-tab-ribbon"
             style={{
@@ -1182,8 +1385,21 @@ export default function App() {
                 color: activeTab === 'practice' ? '#FFFFFF' : c.text,
               }}
             >
-              <Target size={14} style={{ flexShrink: 0 }} />
+              <Target size={13} style={{ flexShrink: 0 }} />
               <span>Practice</span>
+            </button>
+            <button
+              type="button"
+              className="tv-tab-btn"
+              onClick={() => setActiveTab('livestt')}
+              style={{
+                background:
+                  activeTab === 'livestt' ? (isDark ? '#2F5FC4' : '#0D3B84') : 'transparent',
+                color: activeTab === 'livestt' ? '#FFFFFF' : c.text,
+              }}
+            >
+              <Mic size={13} style={{ flexShrink: 0 }} />
+              <span>Live STT</span>
             </button>
             <button
               type="button"
@@ -1195,7 +1411,7 @@ export default function App() {
                 color: activeTab === 'library' ? '#FFFFFF' : c.text,
               }}
             >
-              <BookOpen size={14} style={{ flexShrink: 0 }} />
+              <BookOpen size={13} style={{ flexShrink: 0 }} />
               <span>Library ({filteredItems.length})</span>
             </button>
             <button
@@ -1208,7 +1424,7 @@ export default function App() {
                 color: activeTab === 'progress' ? '#FFFFFF' : c.text,
               }}
             >
-              <TrendingUp size={14} style={{ flexShrink: 0 }} />
+              <TrendingUp size={13} style={{ flexShrink: 0 }} />
               <span>Progress</span>
             </button>
           </nav>
@@ -2250,6 +2466,281 @@ export default function App() {
             </GameCard>
           )}
         </>
+      )}
+
+      {/* =====================================================================
+          TAB 1B: LIVE STT & FREE-SPEECH PRONUNCIATION COACH (faster-whisper-small)
+         ===================================================================== */}
+      {activeTab === 'livestt' && (
+        <GameCard innerStyle={{ padding: '18px 20px' }} style={{ position: 'relative' }}>
+          {isAnalyzing && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 35,
+                borderRadius: 20,
+                background: isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.94)',
+                backdropFilter: 'blur(6px)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 24,
+                textAlign: 'center',
+                gap: 12,
+              }}
+            >
+              <div
+                style={{
+                  width: 68,
+                  height: 68,
+                  borderRadius: 999,
+                  background: 'rgba(248, 154, 28, 0.16)',
+                  border: '3px solid #F89A1C',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 32,
+                }}
+              >
+                🤔
+              </div>
+              <div style={{ fontSize: 19, fontWeight: 900 }}>
+                Transcribing & Scoring Your Free Speech...
+              </div>
+              <div style={{ fontSize: 13, color: c.muted, maxWidth: 380 }}>
+                Running <strong>faster-whisper-small (INT8)</strong> in{' '}
+                {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'} and scoring
+                every phoneme & syllable stress beat
+              </div>
+            </div>
+          )}
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 10,
+              marginBottom: 14,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 19, fontWeight: 900 }}>
+                🎙️ Live Speech-to-Text & Free-Speak Coach
+              </div>
+              <div style={{ fontSize: 12.5, color: c.muted }}>
+                Speak freely in your chosen language — watch live transcription appear and score your pronunciation
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Pill tone={modeAReady ? 'green' : 'orange'}>
+                {modeAReady ? '🟢 faster-whisper-small Ready' : '⚡ Whisper STT'}
+              </Pill>
+              <select
+                value={selectedLang === 'all' ? 'de' : selectedLang}
+                onChange={(e) => setSelectedLang(e.target.value)}
+                style={{
+                  padding: '7px 11px',
+                  borderRadius: 10,
+                  border: `1.5px solid ${c.border}`,
+                  background: c.surface,
+                  color: c.text,
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                {LANGUAGE_OPTIONS.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.flag} {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Live Transcript Display Box */}
+          <div
+            style={{
+              minHeight: 135,
+              padding: '16px 18px',
+              borderRadius: 16,
+              background: isDark ? '#0F172A' : '#F8FAFC',
+              border: `2px solid ${isLiveSttStreaming ? '#F89A1C' : c.border}`,
+              marginBottom: 14,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              gap: 10,
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.5, color: c.text }}>
+              {liveSttFinalList.length === 0 && !liveSttInterim ? (
+                <span style={{ color: c.muted, fontWeight: 600, fontSize: 15 }}>
+                  {isLiveSttStreaming
+                    ? `👂 Listening in ${
+                        LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'
+                      }... Speak any sentence!`
+                    : 'Tap "Start Live Speaking" below and say anything in your selected language...'}
+                </span>
+              ) : (
+                <>
+                  <span>{liveSttFinalList.join(' ')} </span>
+                  {liveSttInterim && (
+                    <span style={{ color: '#F89A1C', fontStyle: 'italic' }}>
+                      {liveSttInterim} ...
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 8,
+                fontSize: 11.5,
+                color: c.muted,
+              }}
+            >
+              <span>
+                Language:{' '}
+                <strong>
+                  {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.flag || '🇩🇪'}{' '}
+                  {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'}
+                </strong>
+                {liveSttConfidence !== null && (
+                  <> · STT Confidence: <strong>{Math.round(liveSttConfidence * 100)}%</strong></>
+                )}
+              </span>
+              {(liveSttFinalList.length > 0 || liveSttInterim) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLiveSttFinalList([]);
+                    setLiveSttInterim('');
+                    setLiveSttConfidence(null);
+                  }}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#DC2626',
+                    fontWeight: 800,
+                    fontSize: 11.5,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Clear Transcript
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isLiveSttStreaming && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 12px',
+                borderRadius: 12,
+                background: 'rgba(248,154,28,0.12)',
+                border: '1px solid rgba(248,154,28,0.4)',
+                marginBottom: 12,
+              }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 800, color: '#F89A1C' }}>
+                🔴 Live Streaming...
+              </span>
+              <div
+                style={{
+                  flex: 1,
+                  height: 8,
+                  borderRadius: 99,
+                  background: isDark ? '#1E293B' : '#E2E8F0',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${liveMicLevel}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #22C55E, #F89A1C)',
+                    transition: 'width 0.06s linear',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {errorMsg && (
+            <div
+              style={{
+                padding: '8px 12px',
+                borderRadius: 10,
+                background: 'rgba(220,38,38,0.12)',
+                color: '#DC2626',
+                fontSize: 13,
+                fontWeight: 700,
+                marginBottom: 12,
+              }}
+            >
+              ⚠️ {errorMsg}
+            </div>
+          )}
+
+          <div className="tv-action-bar">
+            {!isLiveSttStreaming ? (
+              <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
+                <ChunkyButton
+                  tone="orange"
+                  fullWidth
+                  onClick={startLiveSttStream}
+                  disabled={isAnalyzing}
+                >
+                  <Mic size={17} /> Start Live Speaking
+                </ChunkyButton>
+              </div>
+            ) : (
+              <>
+                <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
+                  <ChunkyButton
+                    tone="green"
+                    fullWidth
+                    onClick={() => stopLiveSttStream(true)}
+                  >
+                    <CheckCircle2 size={17} /> Stop & Score Pronunciation
+                  </ChunkyButton>
+                </div>
+                <ChunkyButton tone="red" onClick={() => stopLiveSttStream(false)}>
+                  <Square size={16} /> Stop Only
+                </ChunkyButton>
+              </>
+            )}
+
+            {(liveSttFinalList.length > 0 || liveSttInterim) && !isLiveSttStreaming && (
+              <ChunkyButton
+                tone="navy"
+                onClick={() => {
+                  const text = [...liveSttFinalList, liveSttInterim].join(' ').trim();
+                  if (text) {
+                    setReferenceText(text);
+                    setActiveTab('practice');
+                  }
+                }}
+              >
+                <Target size={15} /> Open in Practice Studio
+              </ChunkyButton>
+            )}
+          </div>
+        </GameCard>
       )}
 
       {/* =====================================================================

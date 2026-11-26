@@ -203,4 +203,6 @@ def create_stt_engine(settings: Settings) -> BaseSTTEngine:
         sherpa_dir=settings.mode_a_sherpa_dir,
         fallback_whisper_model=settings.mode_a_cpu_model,
         cpu_threads=settings.mode_a_cpu_threads,
+        force_whisper=(settings.mode_a_engine == "whisper"),
+        download_root=settings.mode_b_models_dir / "whisper",
     )
