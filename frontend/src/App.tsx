@@ -317,6 +317,10 @@ export default function App() {
   const myVoiceTimerRef = useRef<number | null>(null);
 
   // --- Mode A: Two-Pass Hybrid Live STT (Pass 1 Instant Stream + Pass 2 faster-whisper-small) ---
+  const [sttEngineMode, setSttEngineMode] = useState<'hybrid' | 'whisper_only' | 'browser_only'>('hybrid');
+  const [lastSttSource, setLastSttSource] = useState<string>('');
+  const [lastWhisperText, setLastWhisperText] = useState<string>('');
+  const [lastBrowserText, setLastBrowserText] = useState<string>('');
   const [isLiveSttStreaming, setIsLiveSttStreaming] = useState<boolean>(false);
   const [isSttRecordingClip, setIsSttRecordingClip] = useState<boolean>(false);
   const [vadVoiceActive, setVadVoiceActive] = useState<boolean>(false);
@@ -1012,8 +1016,11 @@ export default function App() {
           return;
         }
         if (data.detected_transcript) {
+          pass1CommittedRef.current = [data.detected_transcript];
           setLiveSttFinalList([data.detected_transcript]);
           setLiveSttInterim('');
+          setLastWhisperText(data.detected_transcript);
+          setLastSttSource(`🧠 Server faster-whisper-small (INT8) · ${elapsed}ms`);
           if (typeof data.stt_confidence === 'number') {
             setLiveSttConfidence(data.stt_confidence);
           }
@@ -1056,8 +1063,11 @@ export default function App() {
             ? data.stt_confidence
             : null;
         if (text) {
+          pass1CommittedRef.current = [text];
           setLiveSttFinalList([text]);
           setLiveSttInterim('');
+          setLastWhisperText(text);
+          setLastSttSource(`🧠 Server faster-whisper-small (INT8) · ${elapsed}ms`);
           if (conf !== null) setLiveSttConfidence(conf);
         } else {
           setErrorMsg('No clear speech detected in the audio.');
@@ -1154,6 +1164,8 @@ export default function App() {
             setLiveSttFinalList([...pass1CommittedRef.current]);
             setLiveSttInterim('');
             setLiveSttConfidence(conf);
+            setLastBrowserText(pass1CommittedRef.current.join(' '));
+            setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
             if (onFinalCommitted) onFinalCommitted(transcript);
           } else {
             interimStr += (interimStr ? ' ' : '') + transcript;
@@ -1241,7 +1253,9 @@ export default function App() {
       setIsSttRecordingClip(true);
       triggerTone(660, 0.07);
 
-      startBrowserPass1Recognizer(selectedLang, () => isSttClipRef.current);
+      if (sttEngineMode !== 'whisper_only') {
+        startBrowserPass1Recognizer(selectedLang, () => isSttClipRef.current);
+      }
     } catch (err: any) {
       setErrorMsg(`Microphone error: ${err?.message || 'Please allow microphone access'}`);
     }
@@ -1276,11 +1290,50 @@ export default function App() {
     if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
     setRecordedAudioUrl(URL.createObjectURL(wavBlob));
 
+    if (sttEngineMode === 'whisper_only') {
+      await transcribeOrScoreWavBlob(wavBlob, 'recorded_stt_16k.wav', alsoScorePronunciation);
+      return;
+    }
+
     if (pass1InterimRef.current.trim()) {
       pass1CommittedRef.current = [...pass1CommittedRef.current, pass1InterimRef.current.trim()];
       pass1InterimRef.current = '';
       setLiveSttFinalList([...pass1CommittedRef.current]);
       setLiveSttInterim('');
+      setLastBrowserText(pass1CommittedRef.current.join(' '));
+      setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
+    }
+
+    // In Hybrid mode on Record to Transcribe, also run Server Whisper in the background so you can see both!
+    if (sttEngineMode === 'hybrid') {
+      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      const fd = new FormData();
+      fd.append('audio', wavBlob, 'recorded_stt_16k.wav');
+      fd.append('language', cleanLang);
+      const t0 = performance.now();
+      setIsPass2Verifying(true);
+      fetch(`${apiBase}/api/v1/stt/transcribe`, { method: 'POST', body: fd })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const elapsed = Math.round(performance.now() - t0);
+          setLatencyMs(elapsed);
+          const wText = (d?.transcript || d?.detected_transcript || '').trim();
+          if (wText) {
+            setLastWhisperText(wText);
+            const preferPass1 = ['bn', 'ta', 'te', 'mr', 'gu', 'ur', 'hi'].includes(cleanLang);
+            if (!preferPass1 || !pass1CommittedRef.current.join(' ').trim()) {
+              pass1CommittedRef.current = [wText];
+              setLiveSttFinalList([wText]);
+              setLastSttSource(`🧠 Pass 2: Server faster-whisper-small (INT8) · ${elapsed}ms`);
+            } else {
+              setLastSttSource(
+                `🔄 Hybrid: Showing Pass 1 Native + Server Whisper (${elapsed}ms) Ready Below`
+              );
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsPass2Verifying(false));
     }
 
     const capturedText = pass1CommittedRef.current.join(' ').trim();
@@ -1319,9 +1372,12 @@ export default function App() {
       setLiveSttConfidence(confVal);
     };
 
-    const preferPass1ForScript = ['bn', 'ta', 'te', 'mr', 'gu', 'ur', 'hi'].includes(cleanLang);
-    if (preferPass1ForScript && cleanDraft.length > 1) {
-      commitFinalSentence(cleanDraft, 0.94);
+    if (sttEngineMode === 'browser_only') {
+      if (cleanDraft) {
+        commitFinalSentence(cleanDraft, 0.94);
+        setLastBrowserText(pass1CommittedRef.current.join(' '));
+        setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
+      }
       return;
     }
 
@@ -1331,6 +1387,7 @@ export default function App() {
     }
 
     setIsPass2Verifying(true);
+    const t0 = performance.now();
     try {
       const wavBlob = encodeMono16kWav(utteranceSamples16k, 16000);
       const fd = new FormData();
@@ -1351,6 +1408,9 @@ export default function App() {
         });
       }
 
+      const elapsed = Math.round(performance.now() - t0);
+      setLatencyMs(elapsed);
+
       if (res.ok) {
         const data = await res.json();
         const whisperText = (data.transcript || data.detected_transcript || '').trim();
@@ -1360,8 +1420,22 @@ export default function App() {
             : typeof data.stt_confidence === 'number'
             ? data.stt_confidence
             : 0.92;
-        if (whisperText && (!cleanDraft || conf >= 0.65)) {
-          commitFinalSentence(whisperText, conf);
+        if (whisperText) {
+          setLastWhisperText((prev) => (prev ? `${prev} ${whisperText}` : whisperText));
+          const preferPass1 =
+            sttEngineMode === 'hybrid' &&
+            ['bn', 'ta', 'te', 'mr', 'gu', 'ur', 'hi'].includes(cleanLang) &&
+            (cleanDraft.length > 1 || pass1CommittedRef.current.length > 0);
+
+          if (!preferPass1) {
+            commitFinalSentence(whisperText, conf);
+            setLastSttSource(`🧠 Pass 2: Server faster-whisper-small (INT8) · ${elapsed}ms`);
+          } else {
+            if (cleanDraft) commitFinalSentence(cleanDraft, 0.94);
+            setLastSttSource(
+              `🔄 Hybrid: Pass 1 Native Active + Server Whisper (${elapsed}ms) Compared Below`
+            );
+          }
           setIsPass2Verifying(false);
           return;
         }
@@ -1370,6 +1444,7 @@ export default function App() {
     // Fallback: commit Pass-1 draft if present
     if (cleanDraft) {
       commitFinalSentence(cleanDraft, 0.9);
+      setLastSttSource('⚡ Pass 1: Browser Native ASR (Fallback)');
     }
     setIsPass2Verifying(false);
   };
@@ -1387,20 +1462,18 @@ export default function App() {
 
       // Pass 1: Launch Resilient Instant Browser Streaming Recognizer (<30ms word-by-word preview)
       let latestPass1Draft = '';
-      let lastBrowserFinalTs = 0;
-      const hasPass1Rec = Boolean(
+      if (sttEngineMode !== 'whisper_only') {
         startBrowserPass1Recognizer(
           selectedLang,
           () => isLiveSttRef.current,
           () => {
-            lastBrowserFinalTs = performance.now();
             latestPass1Draft = '';
           },
           (interim) => {
             latestPass1Draft = interim;
           }
-        )
-      );
+        );
+      }
 
       // Pass 2: Web Audio Adaptive VAD + 160ms Pre-Roll Ring Buffer -> Utterance-Level Whisper
       const source = ctx.createMediaStreamSource(stream);
@@ -1423,12 +1496,6 @@ export default function App() {
         latestPass1Draft = '';
         currentUtteranceChunks = [];
         currentUtteranceSamples = 0;
-
-        // If Pass-1 browser recognizer is active and already committed a final sentence within the last
-        // 1.2s (or is actively streaming a draft), only invoke Server Whisper Pass-2 when Pass-1 has no text!
-        if (hasPass1Rec && (performance.now() - lastBrowserFinalTs < 1400 || draftSnapshot.trim().length > 0)) {
-          return;
-        }
 
         verifyUtteranceWithWhisperPass2(utteranceAudio, selectedLang, draftSnapshot).finally(
           () => setIsPass2Verifying(false)
@@ -1526,6 +1593,8 @@ export default function App() {
       pass1InterimRef.current = '';
       setLiveSttFinalList([...pass1CommittedRef.current]);
       setLiveSttInterim('');
+      setLastBrowserText(pass1CommittedRef.current.join(' '));
+      setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
     }
 
     if (processorRef.current) processorRef.current.disconnect();
@@ -3062,6 +3131,54 @@ export default function App() {
             </div>
           </div>
 
+          {/* Engine Mode Selector Strip: Hybrid vs Pure Server Whisper vs Pure Browser Native */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginBottom: 12,
+              padding: '8px 12px',
+              borderRadius: 12,
+              background: c.surface,
+              border: `1px solid ${c.border}`,
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 800, color: c.muted }}>
+              Transcription Engine:
+            </span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {(
+                [
+                  { id: 'hybrid', label: '🔄 Two-Pass Hybrid (Both)' },
+                  { id: 'whisper_only', label: '🧠 Server Whisper Only (EC2)' },
+                  { id: 'browser_only', label: '⚡ Browser Native Only' },
+                ] as const
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setSttEngineMode(m.id)}
+                  style={{
+                    padding: '5px 10px',
+                    borderRadius: 999,
+                    border: `1.5px solid ${sttEngineMode === m.id ? '#0D3B84' : c.border}`,
+                    background:
+                      sttEngineMode === m.id ? (isDark ? '#2F5FC4' : '#0D3B84') : 'transparent',
+                    color: sttEngineMode === m.id ? '#FFFFFF' : c.text,
+                    fontSize: 11.5,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Live Transcript Display Box */}
           <div
             style={{
@@ -3084,7 +3201,7 @@ export default function App() {
                     ? `👂 Listening in ${
                         LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'
                       }... Speak any sentence!`
-                    : 'Tap "Start Live Speaking" below and say anything in your selected language...'}
+                    : 'Tap "Record to Transcribe" or "Live Stream STT" below and speak in your selected language...'}
                 </span>
               ) : (
                 <>
@@ -3097,6 +3214,65 @@ export default function App() {
                 </>
               )}
             </div>
+
+            {/* Side-by-Side Pass 1 vs Pass 2 Comparison Box when both produced results */}
+            {(lastWhisperText || lastBrowserText) && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: 8,
+                  paddingTop: 8,
+                  borderTop: `1px dashed ${c.border}`,
+                  fontSize: 12,
+                }}
+              >
+                {lastWhisperText && (
+                  <div
+                    onClick={() => {
+                      pass1CommittedRef.current = [lastWhisperText];
+                      setLiveSttFinalList([lastWhisperText]);
+                      setLastSttSource('🧠 Using Server faster-whisper-small');
+                    }}
+                    title="Click to use Server Whisper transcript"
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 8,
+                      background: isDark ? 'rgba(56,189,248,0.1)' : '#EFF6FF',
+                      border: '1px solid rgba(56,189,248,0.35)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontWeight: 900, fontSize: 11, color: '#0284C7' }}>
+                      🧠 Server faster-whisper-small {latencyMs ? `(${latencyMs}ms)` : ''}:
+                    </div>
+                    <div style={{ fontWeight: 700, marginTop: 2 }}>{lastWhisperText}</div>
+                  </div>
+                )}
+                {lastBrowserText && (
+                  <div
+                    onClick={() => {
+                      pass1CommittedRef.current = [lastBrowserText];
+                      setLiveSttFinalList([lastBrowserText]);
+                      setLastSttSource('⚡ Using Browser Native ASR');
+                    }}
+                    title="Click to use Browser Native transcript"
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 8,
+                      background: isDark ? 'rgba(34,197,94,0.1)' : '#F0FDF4',
+                      border: '1px solid rgba(34,197,94,0.35)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontWeight: 900, fontSize: 11, color: '#16A34A' }}>
+                      ⚡ Browser Native ASR (Pass 1):
+                    </div>
+                    <div style={{ fontWeight: 700, marginTop: 2 }}>{lastBrowserText}</div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div
               style={{
@@ -3115,11 +3291,17 @@ export default function App() {
                   {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.flag || '🇩🇪'}{' '}
                   {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'}
                 </strong>
+                {lastSttSource && (
+                  <>
+                    {' '}
+                    · <strong style={{ color: '#0D3B84' }}>{lastSttSource}</strong>
+                  </>
+                )}
                 {liveSttConfidence !== null && (
-                  <> · STT Confidence: <strong>{Math.round(liveSttConfidence * 100)}%</strong></>
+                  <> · Conf: <strong>{Math.round(liveSttConfidence * 100)}%</strong></>
                 )}
               </span>
-              {(liveSttFinalList.length > 0 || liveSttInterim) && (
+              {(liveSttFinalList.length > 0 || liveSttInterim || lastWhisperText || lastBrowserText) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -3128,6 +3310,9 @@ export default function App() {
                     setLiveSttFinalList([]);
                     setLiveSttInterim('');
                     setLiveSttConfidence(null);
+                    setLastWhisperText('');
+                    setLastBrowserText('');
+                    setLastSttSource('');
                   }}
                   style={{
                     border: 'none',
