@@ -944,9 +944,129 @@ export default function App() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = '';
+    const { wavBlob } = await normalizeUploadedAudioFile(file);
     if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
-    setRecordedAudioUrl(URL.createObjectURL(file));
-    await submitAudioForAssessment(file, file.name);
+    setRecordedAudioUrl(URL.createObjectURL(wavBlob));
+    await submitAudioForAssessment(wavBlob, 'uploaded_16k.wav');
+  };
+
+  // Decode any browser-supported audio file (.wav, .mp3, .m4a, .webm, .ogg) into 16kHz mono WAV
+  const normalizeUploadedAudioFile = async (
+    file: File
+  ): Promise<{ wavBlob: Blob; samples16k: Float32Array | null }> => {
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const decoded = await ctx.decodeAudioData(arrayBuf);
+      const raw = decoded.getChannelData(0);
+      const ds16k = downsampleBuffer(raw, decoded.sampleRate, 16000);
+      const trimmed = trimSilenceClientSide(ds16k, 16000);
+      await ctx.close();
+      recordedSamplesRef.current = trimmed;
+      return { wavBlob: encodeMono16kWav(trimmed, 16000), samples16k: trimmed };
+    } catch {
+      return { wavBlob: file, samples16k: null };
+    }
+  };
+
+  // Upload Audio in Live STT Tab (either Transcribe Only or Transcribe + Score Pronunciation)
+  const handleSttFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    alsoScorePronunciation: boolean
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    setIsAnalyzing(true);
+    setErrorMsg(null);
+    const t0 = performance.now();
+
+    try {
+      const { wavBlob } = await normalizeUploadedAudioFile(file);
+      if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+      setRecordedAudioUrl(URL.createObjectURL(wavBlob));
+
+      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      const fd = new FormData();
+      fd.append('audio', wavBlob, 'uploaded_stt_16k.wav');
+      fd.append('language', cleanLang);
+
+      if (alsoScorePronunciation) {
+        const res = await fetch(`${apiBase}/api/v1/pronunciation/free-assess`, {
+          method: 'POST',
+          body: fd,
+        });
+        const elapsed = Math.round(performance.now() - t0);
+        setLatencyMs(elapsed);
+
+        const minWait = Math.max(0, 700 - (performance.now() - t0));
+        if (minWait > 0) await new Promise((r) => window.setTimeout(r, minWait));
+
+        const data = await res.json();
+        if (!res.ok) {
+          setErrorMsg(data?.detail || 'Could not transcribe uploaded audio.');
+          return;
+        }
+        if (data.detected_transcript) {
+          setLiveSttFinalList([data.detected_transcript]);
+          setLiveSttInterim('');
+          if (typeof data.stt_confidence === 'number') {
+            setLiveSttConfidence(data.stt_confidence);
+          }
+          setReferenceText(data.detected_transcript);
+          setAssessResult({
+            overall_score: data.overall_score,
+            metrics: data.metrics,
+            words: data.words,
+            connected_speech: data.connected_speech || computeClientConnectedSpeech(data.words),
+          });
+          setShowResultPopup(true);
+        }
+      } else {
+        // Pure transcription via /api/v1/stt/transcribe (with fallback to /api/v1/pronunciation/free-assess)
+        let res = await fetch(`${apiBase}/api/v1/stt/transcribe`, {
+          method: 'POST',
+          body: fd,
+        });
+        if (res.status === 404) {
+          const fd2 = new FormData();
+          fd2.append('audio', wavBlob, 'uploaded_stt_16k.wav');
+          fd2.append('language', cleanLang);
+          res = await fetch(`${apiBase}/api/v1/pronunciation/free-assess`, {
+            method: 'POST',
+            body: fd2,
+          });
+        }
+        const elapsed = Math.round(performance.now() - t0);
+        setLatencyMs(elapsed);
+
+        const data = await res.json();
+        if (!res.ok) {
+          setErrorMsg(data?.detail || 'Could not transcribe uploaded audio.');
+          return;
+        }
+        const text = data.transcript || data.detected_transcript || '';
+        const conf =
+          typeof data.confidence === 'number'
+            ? data.confidence
+            : typeof data.stt_confidence === 'number'
+            ? data.stt_confidence
+            : null;
+        if (text) {
+          setLiveSttFinalList([text]);
+          setLiveSttInterim('');
+          if (conf !== null) setLiveSttConfidence(conf);
+        } else {
+          setErrorMsg('No clear speech detected in the uploaded file.');
+        }
+      }
+    } catch (err: any) {
+      setErrorMsg(`Audio upload error: ${err?.message || 'Failed to process audio file'}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   // --- Mode A: Real-Time Live STT Streaming (faster-whisper-small) + Free-Speech Scoring ---
@@ -2725,9 +2845,84 @@ export default function App() {
               </>
             )}
 
+            {/* Upload Audio to Transcribe Only */}
+            {!isLiveSttStreaming && (
+              <label style={{ cursor: 'pointer' }} title="Upload WAV, MP3, M4A, or WebM to Transcribe">
+                <input
+                  type="file"
+                  accept="audio/*"
+                  onChange={(e) => handleSttFileUpload(e, false)}
+                  disabled={isAnalyzing}
+                  style={{ display: 'none' }}
+                />
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    height: 46,
+                    padding: '0 16px',
+                    borderRadius: 14,
+                    border: `2px solid ${c.border}`,
+                    background: c.face,
+                    color: c.text,
+                    fontSize: 13,
+                    fontWeight: 900,
+                  }}
+                >
+                  <Upload size={15} /> Upload to Transcribe
+                </span>
+              </label>
+            )}
+
+            {/* Upload Audio to Transcribe & Score Pronunciation */}
+            {!isLiveSttStreaming && (
+              <label
+                style={{ cursor: 'pointer' }}
+                title="Upload audio to transcribe with Whisper AND score pronunciation"
+              >
+                <input
+                  type="file"
+                  accept="audio/*"
+                  onChange={(e) => handleSttFileUpload(e, true)}
+                  disabled={isAnalyzing}
+                  style={{ display: 'none' }}
+                />
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    height: 46,
+                    padding: '0 16px',
+                    borderRadius: 14,
+                    border: '2px solid #0D3B84',
+                    background: isDark ? '#2F5FC4' : '#0D3B84',
+                    color: '#FFFFFF',
+                    fontSize: 13,
+                    fontWeight: 900,
+                  }}
+                >
+                  <Sparkles size={15} /> Upload & Score
+                </span>
+              </label>
+            )}
+
+            {recordedAudioUrl && !isLiveSttStreaming && (
+              <ChunkyButton
+                tone="green"
+                onClick={playMyVoice}
+                disabled={isPlayingMyVoice}
+              >
+                <Play size={15} /> {isPlayingMyVoice ? 'Playing...' : 'Play Audio'}
+              </ChunkyButton>
+            )}
+
             {(liveSttFinalList.length > 0 || liveSttInterim) && !isLiveSttStreaming && (
               <ChunkyButton
-                tone="navy"
+                tone="soft"
                 onClick={() => {
                   const text = [...liveSttFinalList, liveSttInterim].join(' ').trim();
                   if (text) {

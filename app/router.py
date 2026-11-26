@@ -388,6 +388,44 @@ async def assess_pronunciation_short(
 
 
 @router.post(
+    "/api/v1/stt/transcribe",
+    summary="Mode A: Upload Audio File for Multilingual Whisper Transcription",
+)
+async def transcribe_uploaded_audio(
+    request: Request,
+    audio: UploadFile = File(..., description="16kHz mono WAV audio file"),
+    language: str = Form(default="de", description="ISO language code (de, en, en-gb, es, fr, hi)"),
+) -> dict[str, object]:
+    """Transcribe an uploaded audio file using Mode A (`faster-whisper-small` INT8)."""
+    settings: Settings = request.app.state.settings
+    stt_engine: BaseSTTEngine | None = getattr(request.app.state, "stt_engine", None)
+    if stt_engine is None:
+        raise HTTPException(status_code=503, detail="Mode A STT engine is not initialized.")
+
+    audio_bytes = await audio.read()
+    try:
+        samples, _ = load_and_normalize_audio(
+            audio_bytes=audio_bytes,
+            target_sr=settings.sample_rate,
+            trim_silence=settings.mode_b_trim_silence,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if samples.size < int(0.10 * settings.sample_rate):
+        raise HTTPException(status_code=400, detail="Audio clip is too short (< 100ms).")
+
+    transcript, confidence = await stt_engine.transcribe_async(samples, language=language)
+    duration_ms = int(round(samples.size * 1000.0 / settings.sample_rate))
+    return {
+        "transcript": transcript,
+        "language": language,
+        "confidence": confidence,
+        "duration_ms": duration_ms,
+    }
+
+
+@router.post(
     "/api/v1/pronunciation/free-assess",
     response_model=FreeSpeechAssessResponse,
     summary="Mode A + Mode B: 10-15s Unscripted Free-Speech STT + Pronunciation Auto-Correction",
