@@ -83,7 +83,9 @@ LANGUAGE_MAP: dict[str, str] = {
     "ko": "ko",
 }
 
-_WORD_TOKEN_RE = re.compile(r"[^\w\s'-]+", flags=re.UNICODE)
+_WORD_TOKEN_RE = re.compile(
+    r"[^\w\s'\-\u0300-\u036f\u0600-\u06ff\u0900-\u0dff]+", flags=re.UNICODE
+)
 
 
 @dataclass(frozen=True)
