@@ -201,12 +201,31 @@ function friendlyVisemeLabel(viseme: string): string {
 const LOCAL_LIBRARY_KEY = 'gts_pronunciation_library_v2';
 const LOCAL_ATTEMPTS_KEY = 'gts_pronunciation_attempts_v2';
 
+function mergeSeedWithItems(existing: LibraryItem[]): LibraryItem[] {
+  const seen = new Set(existing.map((i) => `${i.language}:${i.text.trim().toLowerCase()}`));
+  let maxId = existing.reduce((m, i) => Math.max(m, i.id), 0);
+  const merged = [...existing];
+  for (const seed of FALLBACK_SEED_ITEMS) {
+    const key = `${seed.language}:${seed.text.trim().toLowerCase()}`;
+    if (!seen.has(key)) {
+      maxId += 1;
+      merged.push({ ...seed, id: maxId });
+      seen.add(key);
+    }
+  }
+  return merged;
+}
+
 function loadFallbackLibrary(): LibraryItem[] {
   try {
     const raw = localStorage.getItem(LOCAL_LIBRARY_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const merged = mergeSeedWithItems(parsed);
+        localStorage.setItem(LOCAL_LIBRARY_KEY, JSON.stringify(merged));
+        return merged;
+      }
     }
   } catch {}
   localStorage.setItem(LOCAL_LIBRARY_KEY, JSON.stringify(FALLBACK_SEED_ITEMS));
