@@ -380,8 +380,9 @@ export default function App() {
       if (iRes.ok) {
         const items: LibraryItem[] = await iRes.json();
         if (Array.isArray(items) && items.length > 0) {
-          setLibraryItems(items);
-          saveFallbackLibrary(items);
+          const merged = mergeSeedWithItems(items);
+          setLibraryItems(merged);
+          saveFallbackLibrary(merged);
           setUsingServerDb(true);
         }
       } else {
