@@ -682,6 +682,43 @@ SEED_LIBRARY_ITEMS: list[dict[str, str]] = [
         "focus_phoneme": "Long /आ/ & Diphthong",
         "meaning_or_tip": "How are you? (Aap kaise hain) — open your mouth fully for 'आप' and nasalize 'हैं' gently.",
     },
+    # --- Bengali (bn — বাংলা) ---
+    {
+        "text": "নমস্কার",
+        "item_type": "word",
+        "language": "bn",
+        "difficulty": "Beginner",
+        "category": "Daily Essentials",
+        "focus_phoneme": "Rounded /ɔ/ & /ʃ/",
+        "meaning_or_tip": "Hello (Nomoshkar) — round your lips gently for the inherent Bengali 'o' (/ɔ/) vowel in the first two syllables.",
+    },
+    {
+        "text": "ধন্যবাদ",
+        "item_type": "word",
+        "language": "bn",
+        "difficulty": "Beginner",
+        "category": "Daily Essentials",
+        "focus_phoneme": "Breathy /dʱ/ & /o/",
+        "meaning_or_tip": "Thank you (Dhonnobad) — start with a voiced breathy 'dh' (/dʱ/) and double the 'nn' sound.",
+    },
+    {
+        "text": "আপনি কেমন আছেন",
+        "item_type": "phrase",
+        "language": "bn",
+        "difficulty": "Beginner",
+        "category": "Daily Essentials",
+        "focus_phoneme": "Open /æ/ in কেমন",
+        "meaning_or_tip": "How are you? (Apni kemon achen) — pronounce 'কেমন' with an open front vowel ('kæ-mon') and soft 'ch'.",
+    },
+    {
+        "text": "আমি বাংলায় কথা বলতে ভালোবাসি",
+        "item_type": "phrase",
+        "language": "bn",
+        "difficulty": "Intermediate",
+        "category": "Daily Essentials",
+        "focus_phoneme": "Aspirated /kʰ/ & /bʱ/",
+        "meaning_or_tip": "I love speaking in Bengali — release a clear puff of breath on 'খ' (kotha) and voiced breath on 'ভ' (bhalobashi).",
+    },
 ]
 
 
