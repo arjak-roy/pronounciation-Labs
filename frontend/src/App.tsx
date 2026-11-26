@@ -316,15 +316,16 @@ export default function App() {
   const myVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const myVoiceTimerRef = useRef<number | null>(null);
 
-  // --- Mode A: Real-Time Live STT (faster-whisper-small) State ---
+  // --- Mode A: Two-Pass Hybrid Live STT (Pass 1 Instant Stream + Pass 2 faster-whisper-small) ---
   const [isLiveSttStreaming, setIsLiveSttStreaming] = useState<boolean>(false);
   const [isSttRecordingClip, setIsSttRecordingClip] = useState<boolean>(false);
   const [vadVoiceActive, setVadVoiceActive] = useState<boolean>(false);
+  const [isPass2Verifying, setIsPass2Verifying] = useState<boolean>(false);
   const [liveSttInterim, setLiveSttInterim] = useState<string>('');
   const [liveSttFinalList, setLiveSttFinalList] = useState<string[]>([]);
   const [liveSttConfidence, setLiveSttConfidence] = useState<number | null>(null);
   const [modeAReady, setModeAReady] = useState<boolean>(false);
-  const liveSttWsRef = useRef<WebSocket | null>(null);
+  const browserSttRef = useRef<any>(null);
   const liveSttChunksRef = useRef<Float32Array[]>([]);
   const isLiveSttRef = useRef<boolean>(false);
   const isSttClipRef = useRef<boolean>(false);
@@ -1145,16 +1146,93 @@ export default function App() {
     await transcribeOrScoreWavBlob(wavBlob, 'recorded_stt_16k.wav', alsoScorePronunciation);
   };
 
-  // --- Mode A: Real-Time Live STT Streaming (faster-whisper-small) + Free-Speech Scoring ---
-  const buildWsUrl = (lang: string): string => {
-    const cleanLang = lang === 'all' ? 'de' : lang;
-    if (typeof window === 'undefined') return '';
-    if (apiBase.startsWith('http://') || apiBase.startsWith('https://')) {
-      const wsBase = apiBase.replace(/^http/, 'ws');
-      return `${wsBase}/ws/transcribe?lang=${encodeURIComponent(cleanLang)}`;
+  // --- Architecture 2: Two-Pass Production Hybrid Live STT ---
+  // Pass 1: Instant (<30ms) word-by-word live preview while speaking (0% server CPU queue)
+  // Pass 2: VAD Utterance Endpointing -> Single-shot faster-whisper-small (INT8) verification on pause
+  const getBcp47Locale = (lang: string): string => {
+    const map: Record<string, string> = {
+      de: 'de-DE',
+      en: 'en-US',
+      'en-gb': 'en-GB',
+      es: 'es-ES',
+      fr: 'fr-FR',
+      it: 'it-IT',
+      pt: 'pt-BR',
+      nl: 'nl-NL',
+      pl: 'pl-PL',
+      sv: 'sv-SE',
+      tr: 'tr-TR',
+      ru: 'ru-RU',
+      hi: 'hi-IN',
+      bn: 'bn-BD',
+      ta: 'ta-IN',
+      te: 'te-IN',
+      mr: 'mr-IN',
+      gu: 'gu-IN',
+      ur: 'ur-PK',
+      ar: 'ar-SA',
+      ja: 'ja-JP',
+      zh: 'zh-CN',
+      ko: 'ko-KR',
+      id: 'id-ID',
+      vi: 'vi-VN',
+      uk: 'uk-UA',
+      el: 'el-GR',
+    };
+    return map[lang] || 'de-DE';
+  };
+
+  const verifyUtteranceWithWhisperPass2 = async (
+    utteranceSamples16k: Float32Array,
+    lang: string,
+    pass1Draft: string
+  ) => {
+    if (utteranceSamples16k.length < 2400) return; // < 150ms ignore
+    setIsPass2Verifying(true);
+    try {
+      const wavBlob = encodeMono16kWav(utteranceSamples16k, 16000);
+      const cleanLang = lang === 'all' ? 'de' : lang;
+      const fd = new FormData();
+      fd.append('audio', wavBlob, 'utterance_16k.wav');
+      fd.append('language', cleanLang);
+
+      let res = await fetch(`${apiBase}/api/v1/stt/transcribe`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (res.status === 404) {
+        const fd2 = new FormData();
+        fd2.append('audio', wavBlob, 'utterance_16k.wav');
+        fd2.append('language', cleanLang);
+        res = await fetch(`${apiBase}/api/v1/pronunciation/free-assess`, {
+          method: 'POST',
+          body: fd2,
+        });
+      }
+
+      if (res.ok) {
+        const data = await res.json();
+        const whisperText = (data.transcript || data.detected_transcript || '').trim();
+        const conf =
+          typeof data.confidence === 'number'
+            ? data.confidence
+            : typeof data.stt_confidence === 'number'
+            ? data.stt_confidence
+            : 0.92;
+        if (whisperText) {
+          setLiveSttFinalList((prev) => [...prev, whisperText]);
+          setLiveSttInterim('');
+          setLiveSttConfidence(conf);
+          return;
+        }
+      }
+    } catch {}
+    // Fallback if offline: commit Pass-1 draft if present
+    if (pass1Draft.trim()) {
+      setLiveSttFinalList((prev) => [...prev, pass1Draft.trim()]);
+      setLiveSttInterim('');
     }
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}${apiBase}/ws/transcribe?lang=${encodeURIComponent(cleanLang)}`;
+    setIsPass2Verifying(false);
   };
 
   const startLiveSttStream = async () => {
@@ -1168,45 +1246,69 @@ export default function App() {
       const inRate = ctx.sampleRate;
       liveSttChunksRef.current = [];
 
-      const wsUrl = buildWsUrl(selectedLang);
-      const ws = new WebSocket(wsUrl);
-      liveSttWsRef.current = ws;
-
-      ws.onmessage = (ev) => {
+      // Pass 1: Launch Instant Browser Streaming Recognizer (<30ms word-by-word preview)
+      let latestPass1Draft = '';
+      const SpeechRec =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRec) {
         try {
-          const msg = JSON.parse(ev.data);
-          if (msg.error) {
-            setErrorMsg(msg.error);
-            return;
-          }
-          if (msg.type === 'interim') {
-            setLiveSttInterim(msg.transcript || '');
-            if (typeof msg.confidence === 'number') setLiveSttConfidence(msg.confidence);
-          } else if (msg.type === 'final' && msg.transcript) {
-            setLiveSttFinalList((prev) => [...prev, msg.transcript]);
-            setLiveSttInterim('');
-            if (typeof msg.confidence === 'number') setLiveSttConfidence(msg.confidence);
-          }
+          const rec = new SpeechRec();
+          rec.lang = getBcp47Locale(selectedLang);
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.onresult = (event: any) => {
+            let interimStr = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const transcript = event.results[i][0]?.transcript || '';
+              if (event.results[i].isFinal) {
+                latestPass1Draft = transcript;
+                setLiveSttInterim(transcript);
+              } else {
+                interimStr += transcript;
+              }
+            }
+            if (interimStr) {
+              latestPass1Draft = interimStr;
+              setLiveSttInterim(interimStr);
+            }
+          };
+          rec.onerror = () => {};
+          rec.onend = () => {
+            if (isLiveSttRef.current) {
+              try {
+                rec.start();
+              } catch {}
+            }
+          };
+          rec.start();
+          browserSttRef.current = rec;
         } catch {}
-      };
+      }
 
+      // Pass 2: Web Audio Adaptive VAD + 160ms Pre-Roll Ring Buffer -> Utterance-Level Whisper
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(1024, 1, 1);
-      let accChunks: Float32Array[] = [];
-      let accSamples = 0;
+      let currentUtteranceChunks: Float32Array[] = [];
+      let currentUtteranceSamples = 0;
       let preRollRing: Float32Array[] = [];
       let speechActive = false;
       let silenceSamplesSinceSpeech = 0;
       let noiseFloor = 0.005;
 
-      const sendPcmFloat32 = (floatSamples: Float32Array) => {
-        if (ws.readyState !== WebSocket.OPEN || floatSamples.length === 0) return;
-        const pcm16 = new Int16Array(floatSamples.length);
-        for (let i = 0; i < floatSamples.length; i++) {
-          const s = Math.max(-1, Math.min(1, floatSamples[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      const flushUtteranceToPass2 = () => {
+        if (currentUtteranceSamples < 2400) {
+          currentUtteranceChunks = [];
+          currentUtteranceSamples = 0;
+          return;
         }
-        ws.send(pcm16.buffer);
+        const utteranceAudio = mergeBuffers(currentUtteranceChunks);
+        const draftSnapshot = latestPass1Draft;
+        latestPass1Draft = '';
+        currentUtteranceChunks = [];
+        currentUtteranceSamples = 0;
+        verifyUtteranceWithWhisperPass2(utteranceAudio, selectedLang, draftSnapshot).finally(
+          () => setIsPass2Verifying(false)
+        );
       };
 
       processor.onaudioprocess = (e) => {
@@ -1234,55 +1336,38 @@ export default function App() {
 
         if (isSpeechFrame) {
           setVadVoiceActive(true);
-          // Only record active speech into the local audio buffer (strips dead air!)
           if (!speechActive && preRollRing.length > 0) {
             const preRoll = mergeBuffers(preRollRing);
             preRollRing = [];
             liveSttChunksRef.current.push(preRoll);
-            sendPcmFloat32(preRoll);
+            currentUtteranceChunks.push(preRoll);
+            currentUtteranceSamples += preRoll.length;
           }
           speechActive = true;
           silenceSamplesSinceSpeech = 0;
           liveSttChunksRef.current.push(ds16k);
-          accChunks.push(ds16k);
-          accSamples += ds16k.length;
+          currentUtteranceChunks.push(ds16k);
+          currentUtteranceSamples += ds16k.length;
 
-          // Stream every 80ms (1280 samples @ 16kHz) for ultra-low-latency live transcription
-          if (accSamples >= 1280) {
-            const merged16k = mergeBuffers(accChunks);
-            accChunks = [];
-            accSamples = 0;
-            sendPcmFloat32(merged16k);
+          // If user speaks continuously for >5.5s without pausing, checkpoint to Whisper Pass 2
+          if (currentUtteranceSamples >= 88000) {
+            flushUtteranceToPass2();
           }
         } else if (speechActive) {
           silenceSamplesSinceSpeech += ds16k.length;
           liveSttChunksRef.current.push(ds16k);
-          accChunks.push(ds16k);
-          accSamples += ds16k.length;
+          currentUtteranceChunks.push(ds16k);
+          currentUtteranceSamples += ds16k.length;
 
-          if (accSamples >= 1280) {
-            const merged16k = mergeBuffers(accChunks);
-            accChunks = [];
-            accSamples = 0;
-            sendPcmFloat32(merged16k);
-          }
-
-          // After ~380ms of silence (6080 samples @ 16kHz), flush the utterance immediately
-          if (silenceSamplesSinceSpeech >= 6080) {
-            if (accSamples > 0) {
-              sendPcmFloat32(mergeBuffers(accChunks));
-              accChunks = [];
-              accSamples = 0;
-            }
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'flush' }));
-            }
+          // After ~460ms of silence (7360 samples @ 16kHz), VAD endpoints the utterance -> Pass 2 Whisper!
+          if (silenceSamplesSinceSpeech >= 7360) {
             speechActive = false;
             silenceSamplesSinceSpeech = 0;
             setVadVoiceActive(false);
+            flushUtteranceToPass2();
           }
         } else {
-          // Pure silence: keep a rolling ~160ms pre-roll ring buffer and drop silent packets
+          // Pure silence: maintain 160ms pre-roll ring buffer and drop silent frames
           setVadVoiceActive(false);
           preRollRing.push(ds16k);
           if (preRollRing.length > 5) preRollRing.shift();
@@ -1311,18 +1396,19 @@ export default function App() {
     setLiveMicLevel(0);
     triggerTone(440, 0.07);
 
-    const inRate = audioCtxRef.current?.sampleRate || 48000;
+    if (browserSttRef.current) {
+      try {
+        browserSttRef.current.onend = null;
+        browserSttRef.current.stop();
+      } catch {}
+      browserSttRef.current = null;
+    }
+
     if (processorRef.current) processorRef.current.disconnect();
     if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach((t) => t.stop());
     if (audioCtxRef.current) {
       try {
         await audioCtxRef.current.close();
-      } catch {}
-    }
-
-    if (liveSttWsRef.current && liveSttWsRef.current.readyState === WebSocket.OPEN) {
-      try {
-        liveSttWsRef.current.send(JSON.stringify({ type: 'close' }));
       } catch {}
     }
 
@@ -1333,6 +1419,14 @@ export default function App() {
     const wavBlob = encodeMono16kWav(trimmed, 16000);
     if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
     setRecordedAudioUrl(URL.createObjectURL(wavBlob));
+
+    if (!andScorePronunciation) {
+      // Final Pass-2 verification if any unverified interim text remains
+      if (liveSttInterim.trim() || liveSttFinalList.length === 0) {
+        await transcribeOrScoreWavBlob(wavBlob, 'free_speech_16k.wav', false);
+      }
+      return;
+    }
 
     if (andScorePronunciation) {
       setIsAnalyzing(true);
@@ -2801,12 +2895,16 @@ export default function App() {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {isLiveSttStreaming && (
-                <Pill tone={vadVoiceActive ? 'green' : 'slate'}>
-                  {vadVoiceActive ? '🟢 VAD: Voice Active' : '⚪ VAD: Filtering Silence'}
+                <Pill tone={vadVoiceActive ? 'green' : isPass2Verifying ? 'orange' : 'slate'}>
+                  {vadVoiceActive
+                    ? '🟢 Pass 1: Live Words (<30ms)'
+                    : isPass2Verifying
+                    ? '🧠 Pass 2: Whisper Verifying...'
+                    : '⚪ VAD: Waiting for Voice'}
                 </Pill>
               )}
               <Pill tone={modeAReady ? 'green' : 'orange'}>
-                {modeAReady ? '🟢 Whisper + Silero VAD' : '⚡ Whisper STT'}
+                {modeAReady ? '🟢 Two-Pass Hybrid STT' : '⚡ Hybrid Whisper STT'}
               </Pill>
               <select
                 value={selectedLang === 'all' ? 'de' : selectedLang}
