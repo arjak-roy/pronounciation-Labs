@@ -53,20 +53,24 @@ IPA_FALLBACK_CHAR_MAP: dict[str, str] = {
 }
 
 LANGUAGE_MAP: dict[str, str] = {
+    "de": "de",
     "en": "en-us",
     "en-us": "en-us",
     "en-gb": "en-gb",
     "es": "es",
     "fr": "fr-fr",
-    "de": "de",
     "it": "it",
     "pt": "pt-br",
+    "nl": "nl",
+    "pl": "pl",
+    "sv": "sv",
+    "tr": "tr",
     "ru": "ru",
-    "zh": "cmn",
-    "ja": "ja",
-    "ko": "ko",
     "hi": "hi",
     "ar": "ar",
+    "ja": "ja",
+    "zh": "cmn",
+    "ko": "ko",
 }
 
 _WORD_TOKEN_RE = re.compile(r"[^\w\s'-]+", flags=re.UNICODE)

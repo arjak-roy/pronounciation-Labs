@@ -318,6 +318,7 @@ export default function App() {
 
   // --- Mode A: Real-Time Live STT (faster-whisper-small) State ---
   const [isLiveSttStreaming, setIsLiveSttStreaming] = useState<boolean>(false);
+  const [isSttRecordingClip, setIsSttRecordingClip] = useState<boolean>(false);
   const [liveSttInterim, setLiveSttInterim] = useState<string>('');
   const [liveSttFinalList, setLiveSttFinalList] = useState<string[]>([]);
   const [liveSttConfidence, setLiveSttConfidence] = useState<number | null>(null);
@@ -325,6 +326,7 @@ export default function App() {
   const liveSttWsRef = useRef<WebSocket | null>(null);
   const liveSttChunksRef = useRef<Float32Array[]>([]);
   const isLiveSttRef = useRef<boolean>(false);
+  const isSttClipRef = useRef<boolean>(false);
 
   // --- Learner Gamification State ---
   const [xp, setXp] = useState<number>(() => Number(localStorage.getItem('gts_xp') || '120'));
@@ -970,27 +972,23 @@ export default function App() {
     }
   };
 
-  // Upload Audio in Live STT Tab (either Transcribe Only or Transcribe + Score Pronunciation)
-  const handleSttFileUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
+  // Shared helper to transcribe a 16kHz WAV blob (either Transcribe Only or Transcribe + Score)
+  const transcribeOrScoreWavBlob = async (
+    wavBlob: Blob,
+    filename: string,
     alsoScorePronunciation: boolean
   ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-
     setIsAnalyzing(true);
     setErrorMsg(null);
     const t0 = performance.now();
 
     try {
-      const { wavBlob } = await normalizeUploadedAudioFile(file);
       if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
       setRecordedAudioUrl(URL.createObjectURL(wavBlob));
 
       const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
       const fd = new FormData();
-      fd.append('audio', wavBlob, 'uploaded_stt_16k.wav');
+      fd.append('audio', wavBlob, filename);
       fd.append('language', cleanLang);
 
       if (alsoScorePronunciation) {
@@ -1006,7 +1004,7 @@ export default function App() {
 
         const data = await res.json();
         if (!res.ok) {
-          setErrorMsg(data?.detail || 'Could not transcribe uploaded audio.');
+          setErrorMsg(data?.detail || 'Could not transcribe audio.');
           return;
         }
         if (data.detected_transcript) {
@@ -1025,14 +1023,13 @@ export default function App() {
           setShowResultPopup(true);
         }
       } else {
-        // Pure transcription via /api/v1/stt/transcribe (with fallback to /api/v1/pronunciation/free-assess)
         let res = await fetch(`${apiBase}/api/v1/stt/transcribe`, {
           method: 'POST',
           body: fd,
         });
         if (res.status === 404) {
           const fd2 = new FormData();
-          fd2.append('audio', wavBlob, 'uploaded_stt_16k.wav');
+          fd2.append('audio', wavBlob, filename);
           fd2.append('language', cleanLang);
           res = await fetch(`${apiBase}/api/v1/pronunciation/free-assess`, {
             method: 'POST',
@@ -1044,7 +1041,7 @@ export default function App() {
 
         const data = await res.json();
         if (!res.ok) {
-          setErrorMsg(data?.detail || 'Could not transcribe uploaded audio.');
+          setErrorMsg(data?.detail || 'Could not transcribe audio.');
           return;
         }
         const text = data.transcript || data.detected_transcript || '';
@@ -1059,14 +1056,92 @@ export default function App() {
           setLiveSttInterim('');
           if (conf !== null) setLiveSttConfidence(conf);
         } else {
-          setErrorMsg('No clear speech detected in the uploaded file.');
+          setErrorMsg('No clear speech detected in the audio.');
         }
       }
     } catch (err: any) {
-      setErrorMsg(`Audio upload error: ${err?.message || 'Failed to process audio file'}`);
+      setErrorMsg(`Transcription error: ${err?.message || 'Failed to process audio'}`);
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  // Upload Audio in Live STT Tab (either Transcribe Only or Transcribe + Score Pronunciation)
+  const handleSttFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    alsoScorePronunciation: boolean
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const { wavBlob } = await normalizeUploadedAudioFile(file);
+    await transcribeOrScoreWavBlob(wavBlob, 'uploaded_stt_16k.wav', alsoScorePronunciation);
+  };
+
+  // Record a Voice Clip in Live STT Tab to Transcribe (or Transcribe & Score)
+  const startSttClipRecording = async () => {
+    try {
+      setErrorMsg(null);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      liveSttChunksRef.current = [];
+
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
+
+      processor.onaudioprocess = (e) => {
+        if (!isSttClipRef.current) return;
+        const ch = new Float32Array(e.inputBuffer.getChannelData(0));
+        liveSttChunksRef.current.push(ch);
+
+        let sum = 0;
+        for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+        const rms = Math.sqrt(sum / ch.length);
+        setLiveMicLevel(Math.min(100, Math.round(rms * 420)));
+      };
+
+      source.connect(processor);
+      processor.connect(ctx.destination);
+
+      mediaStreamRef.current = stream;
+      audioCtxRef.current = ctx;
+      processorRef.current = processor;
+      isSttClipRef.current = true;
+      setIsSttRecordingClip(true);
+      triggerTone(660, 0.07);
+    } catch (err: any) {
+      setErrorMsg(`Microphone error: ${err?.message || 'Please allow microphone access'}`);
+    }
+  };
+
+  const stopSttClipRecording = async (alsoScorePronunciation: boolean) => {
+    if (!isSttClipRef.current) return;
+    isSttClipRef.current = false;
+    setIsSttRecordingClip(false);
+    setLiveMicLevel(0);
+    triggerTone(440, 0.07);
+
+    const inRate = audioCtxRef.current?.sampleRate || 48000;
+    if (processorRef.current) processorRef.current.disconnect();
+    if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+    if (audioCtxRef.current) {
+      try {
+        await audioCtxRef.current.close();
+      } catch {}
+    }
+
+    const merged = mergeBuffers(liveSttChunksRef.current);
+    if (merged.length < 1600) {
+      setErrorMsg('Recording was too short. Please speak for at least 1 second.');
+      return;
+    }
+    const ds16k = downsampleBuffer(merged, inRate, 16000);
+    const trimmed = trimSilenceClientSide(ds16k, 16000);
+    recordedSamplesRef.current = trimmed;
+    const wavBlob = encodeMono16kWav(trimmed, 16000);
+    await transcribeOrScoreWavBlob(wavBlob, 'recorded_stt_16k.wav', alsoScorePronunciation);
   };
 
   // --- Mode A: Real-Time Live STT Streaming (faster-whisper-small) + Free-Speech Scoring ---
@@ -2763,7 +2838,7 @@ export default function App() {
             </div>
           </div>
 
-          {isLiveSttStreaming && (
+          {(isLiveSttStreaming || isSttRecordingClip) && (
             <div
               style={{
                 display: 'flex',
@@ -2777,7 +2852,7 @@ export default function App() {
               }}
             >
               <span style={{ fontSize: 12, fontWeight: 800, color: '#F89A1C' }}>
-                🔴 Live Streaming...
+                {isSttRecordingClip ? '🔴 Recording Clip...' : '🔴 Live Streaming...'}
               </span>
               <div
                 style={{
@@ -2817,18 +2892,50 @@ export default function App() {
           )}
 
           <div className="tv-action-bar">
-            {!isLiveSttStreaming ? (
-              <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
+            {!isLiveSttStreaming && !isSttRecordingClip && (
+              <>
+                <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
+                  <ChunkyButton
+                    tone="orange"
+                    fullWidth
+                    onClick={startSttClipRecording}
+                    disabled={isAnalyzing}
+                  >
+                    <Mic size={17} /> Record to Transcribe
+                  </ChunkyButton>
+                </div>
+
                 <ChunkyButton
-                  tone="orange"
-                  fullWidth
+                  tone="navy"
                   onClick={startLiveSttStream}
                   disabled={isAnalyzing}
                 >
-                  <Mic size={17} /> Start Live Speaking
+                  <Sparkles size={16} /> Live Stream STT
                 </ChunkyButton>
-              </div>
-            ) : (
+              </>
+            )}
+
+            {isSttRecordingClip && (
+              <>
+                <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
+                  <ChunkyButton
+                    tone="navy"
+                    fullWidth
+                    onClick={() => stopSttClipRecording(false)}
+                  >
+                    <Square size={16} /> Stop & Transcribe
+                  </ChunkyButton>
+                </div>
+                <ChunkyButton
+                  tone="green"
+                  onClick={() => stopSttClipRecording(true)}
+                >
+                  <CheckCircle2 size={16} /> Stop, Transcribe & Score
+                </ChunkyButton>
+              </>
+            )}
+
+            {isLiveSttStreaming && (
               <>
                 <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
                   <ChunkyButton
@@ -2840,13 +2947,13 @@ export default function App() {
                   </ChunkyButton>
                 </div>
                 <ChunkyButton tone="red" onClick={() => stopLiveSttStream(false)}>
-                  <Square size={16} /> Stop Only
+                  <Square size={16} /> Stop Stream
                 </ChunkyButton>
               </>
             )}
 
             {/* Upload Audio to Transcribe Only */}
-            {!isLiveSttStreaming && (
+            {!isLiveSttStreaming && !isSttRecordingClip && (
               <label style={{ cursor: 'pointer' }} title="Upload WAV, MP3, M4A, or WebM to Transcribe">
                 <input
                   type="file"
@@ -2877,7 +2984,7 @@ export default function App() {
             )}
 
             {/* Upload Audio to Transcribe & Score Pronunciation */}
-            {!isLiveSttStreaming && (
+            {!isLiveSttStreaming && !isSttRecordingClip && (
               <label
                 style={{ cursor: 'pointer' }}
                 title="Upload audio to transcribe with Whisper AND score pronunciation"
@@ -2910,7 +3017,7 @@ export default function App() {
               </label>
             )}
 
-            {recordedAudioUrl && !isLiveSttStreaming && (
+            {recordedAudioUrl && !isLiveSttStreaming && !isSttRecordingClip && (
               <ChunkyButton
                 tone="green"
                 onClick={playMyVoice}
@@ -2920,20 +3027,22 @@ export default function App() {
               </ChunkyButton>
             )}
 
-            {(liveSttFinalList.length > 0 || liveSttInterim) && !isLiveSttStreaming && (
-              <ChunkyButton
-                tone="soft"
-                onClick={() => {
-                  const text = [...liveSttFinalList, liveSttInterim].join(' ').trim();
-                  if (text) {
-                    setReferenceText(text);
-                    setActiveTab('practice');
-                  }
-                }}
-              >
-                <Target size={15} /> Open in Practice Studio
-              </ChunkyButton>
-            )}
+            {(liveSttFinalList.length > 0 || liveSttInterim) &&
+              !isLiveSttStreaming &&
+              !isSttRecordingClip && (
+                <ChunkyButton
+                  tone="soft"
+                  onClick={() => {
+                    const text = [...liveSttFinalList, liveSttInterim].join(' ').trim();
+                    if (text) {
+                      setReferenceText(text);
+                      setActiveTab('practice');
+                    }
+                  }}
+                >
+                  <Target size={15} /> Open in Practice Studio
+                </ChunkyButton>
+              )}
           </div>
         </GameCard>
       )}

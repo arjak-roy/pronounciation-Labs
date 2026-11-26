@@ -68,12 +68,23 @@ export interface LibraryStats {
 }
 
 export const LANGUAGE_OPTIONS = [
+  { code: 'de', label: 'German (Deutsch)', flag: '🇩🇪' },
   { code: 'en', label: 'English (US)', flag: '🇺🇸' },
   { code: 'en-gb', label: 'English (UK)', flag: '🇬🇧' },
-  { code: 'es', label: 'Spanish', flag: '🇪🇸' },
-  { code: 'fr', label: 'French', flag: '🇫🇷' },
-  { code: 'de', label: 'German', flag: '🇩🇪' },
-  { code: 'hi', label: 'Hindi', flag: '🇮🇳' },
+  { code: 'es', label: 'Spanish (Español)', flag: '🇪🇸' },
+  { code: 'fr', label: 'French (Français)', flag: '🇫🇷' },
+  { code: 'it', label: 'Italian (Italiano)', flag: '🇮🇹' },
+  { code: 'pt', label: 'Portuguese (Português)', flag: '🇧🇷' },
+  { code: 'nl', label: 'Dutch (Nederlands)', flag: '🇳🇱' },
+  { code: 'pl', label: 'Polish (Polski)', flag: '🇵🇱' },
+  { code: 'sv', label: 'Swedish (Svenska)', flag: '🇸🇪' },
+  { code: 'tr', label: 'Turkish (Türkçe)', flag: '🇹🇷' },
+  { code: 'ru', label: 'Russian (Русский)', flag: '🇷🇺' },
+  { code: 'hi', label: 'Hindi (हिन्दी)', flag: '🇮🇳' },
+  { code: 'ar', label: 'Arabic (العربية)', flag: '🇸🇦' },
+  { code: 'ja', label: 'Japanese (日本語)', flag: '🇯🇵' },
+  { code: 'zh', label: 'Chinese (中文)', flag: '🇨🇳' },
+  { code: 'ko', label: 'Korean (한국어)', flag: '🇰🇷' },
 ] as const;
 
 export const CATEGORY_OPTIONS = [

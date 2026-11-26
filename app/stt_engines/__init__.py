@@ -10,18 +10,24 @@ from app.schemas import TranscribeEvent
 
 # Normalize ISO language variants (e.g. 'en-us' -> 'en') for Whisper / STT engines
 STT_LANG_MAP: dict[str, str] = {
+    "de": "de",
     "en": "en",
     "en-us": "en",
     "en-gb": "en",
     "es": "es",
     "fr": "fr",
-    "de": "de",
+    "it": "it",
+    "pt": "pt",
+    "nl": "nl",
+    "pl": "pl",
+    "sv": "sv",
+    "tr": "tr",
+    "ru": "ru",
     "hi": "hi",
+    "ar": "ar",
     "ja": "ja",
     "zh": "zh",
     "ko": "ko",
-    "ru": "ru",
-    "ar": "ar",
 }
 
 
