@@ -34,7 +34,7 @@ def ensure_sherpa_model(sherpa_dir: Path) -> None:
 
 def ensure_models() -> None:
     settings = get_settings()
-    if settings.mode_a_enabled:
+    if settings.mode_a_enabled and settings.mode_a_engine == "sherpa":
         ensure_sherpa_model(settings.mode_a_sherpa_dir)
 
     vocab_file = settings.mode_b_tokenizer_dir / "vocab.json"

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import sherpa_onnx
 
 from app.schemas import TranscribeEvent
 from app.stt_engines import STT_LANG_MAP, BaseSTTEngine, StreamingSTTSession
@@ -21,7 +21,7 @@ class SherpaStreamingSession(StreamingSTTSession):
     def __init__(
         self,
         engine: SherpaCpuEngine,
-        recognizer: sherpa_onnx.OnlineRecognizer,
+        recognizer: Any,
         language: str = "en",
         sample_rate: int = 16000,
     ) -> None:
@@ -128,8 +128,10 @@ class SherpaCpuEngine(BaseSTTEngine):
             and joiner_path.exists()
             and tokens_path.exists()
         ):
+            import sherpa_onnx
+
             logger.info("Loading Sherpa-ONNX Streaming Zipformer INT8 from %s ...", sherpa_dir)
-            self._recognizer: sherpa_onnx.OnlineRecognizer | None = (
+            self._recognizer: Any = (
                 sherpa_onnx.OnlineRecognizer.from_transducer(
                     tokens=str(tokens_path),
                     encoder=str(encoder_path),

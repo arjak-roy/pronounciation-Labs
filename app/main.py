@@ -56,7 +56,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.acoustic_engine = acoustic_engine
     app.state.aligner = aligner
     app.state.library_db = PronunciationLibraryDB(db_path=settings.database_path, g2p=g2p)
-    app.state.stt_engine = create_stt_engine(settings) if settings.mode_a_enabled else None
+    stt_engine = None
+    if settings.mode_a_enabled:
+        try:
+            stt_engine = create_stt_engine(settings)
+        except Exception as exc:
+            logger.warning("Mode A STT initialization skipped (%s); continuing with Mode B.", exc)
+    app.state.stt_engine = stt_engine
 
     logger.info(
         "Mode B Engine ready: provider=%s (vocab_size=%d) | Mode A enabled=%s",
