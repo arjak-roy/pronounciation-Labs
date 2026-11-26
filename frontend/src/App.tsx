@@ -326,6 +326,8 @@ export default function App() {
   const [liveSttConfidence, setLiveSttConfidence] = useState<number | null>(null);
   const [modeAReady, setModeAReady] = useState<boolean>(false);
   const browserSttRef = useRef<any>(null);
+  const pass1CommittedRef = useRef<string[]>([]);
+  const pass1InterimRef = useRef<string>('');
   const liveSttChunksRef = useRef<Float32Array[]>([]);
   const isLiveSttRef = useRef<boolean>(false);
   const isSttClipRef = useRef<boolean>(false);
@@ -1080,75 +1082,6 @@ export default function App() {
     await transcribeOrScoreWavBlob(wavBlob, 'uploaded_stt_16k.wav', alsoScorePronunciation);
   };
 
-  // Record a Voice Clip in Live STT Tab to Transcribe (or Transcribe & Score)
-  const startSttClipRecording = async () => {
-    try {
-      setErrorMsg(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-      });
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      liveSttChunksRef.current = [];
-
-      const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(2048, 1, 1);
-
-      processor.onaudioprocess = (e) => {
-        if (!isSttClipRef.current) return;
-        const ch = new Float32Array(e.inputBuffer.getChannelData(0));
-        liveSttChunksRef.current.push(ch);
-
-        let sum = 0;
-        for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
-        const rms = Math.sqrt(sum / ch.length);
-        setLiveMicLevel(Math.min(100, Math.round(rms * 420)));
-      };
-
-      source.connect(processor);
-      processor.connect(ctx.destination);
-
-      mediaStreamRef.current = stream;
-      audioCtxRef.current = ctx;
-      processorRef.current = processor;
-      isSttClipRef.current = true;
-      setIsSttRecordingClip(true);
-      triggerTone(660, 0.07);
-    } catch (err: any) {
-      setErrorMsg(`Microphone error: ${err?.message || 'Please allow microphone access'}`);
-    }
-  };
-
-  const stopSttClipRecording = async (alsoScorePronunciation: boolean) => {
-    if (!isSttClipRef.current) return;
-    isSttClipRef.current = false;
-    setIsSttRecordingClip(false);
-    setLiveMicLevel(0);
-    triggerTone(440, 0.07);
-
-    const inRate = audioCtxRef.current?.sampleRate || 48000;
-    if (processorRef.current) processorRef.current.disconnect();
-    if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-    if (audioCtxRef.current) {
-      try {
-        await audioCtxRef.current.close();
-      } catch {}
-    }
-
-    const merged = mergeBuffers(liveSttChunksRef.current);
-    if (merged.length < 1600) {
-      setErrorMsg('Recording was too short. Please speak for at least 1 second.');
-      return;
-    }
-    const ds16k = downsampleBuffer(merged, inRate, 16000);
-    const trimmed = trimSilenceClientSide(ds16k, 16000);
-    recordedSamplesRef.current = trimmed;
-    const wavBlob = encodeMono16kWav(trimmed, 16000);
-    await transcribeOrScoreWavBlob(wavBlob, 'recorded_stt_16k.wav', alsoScorePronunciation);
-  };
-
-  // --- Architecture 2: Two-Pass Production Hybrid Live STT ---
-  // Pass 1: Instant (<30ms) word-by-word live preview while speaking (0% server CPU queue)
-  // Pass 2: VAD Utterance Endpointing -> Single-shot faster-whisper-small (INT8) verification on pause
   const getBcp47Locale = (lang: string): string => {
     const map: Record<string, string> = {
       de: 'de-DE',
@@ -1182,6 +1115,187 @@ export default function App() {
     return map[lang] || 'de-DE';
   };
 
+  // Helper to start resilient Pass-1 Browser SpeechRecognition that commits isFinal directly
+  // and auto-restarts on silence timeouts without losing interim or final sentences.
+  const startBrowserPass1Recognizer = (
+    langCode: string,
+    isActiveGetter: () => boolean,
+    onFinalCommitted?: (text: string) => void,
+    onInterimUpdated?: (text: string) => void
+  ) => {
+    const SpeechRec =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) return null;
+
+    try {
+      const rec = new SpeechRec();
+      rec.lang = getBcp47Locale(langCode);
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+
+      rec.onresult = (event: any) => {
+        let interimStr = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i];
+          const transcript = (res[0]?.transcript || '').trim();
+          const conf =
+            typeof res[0]?.confidence === 'number' && res[0].confidence > 0
+              ? res[0].confidence
+              : 0.94;
+          if (!transcript) continue;
+
+          if (res.isFinal) {
+            const curList = pass1CommittedRef.current;
+            if (curList.length === 0 || curList[curList.length - 1] !== transcript) {
+              pass1CommittedRef.current = [...curList, transcript];
+            }
+            pass1InterimRef.current = '';
+            setLiveSttFinalList([...pass1CommittedRef.current]);
+            setLiveSttInterim('');
+            setLiveSttConfidence(conf);
+            if (onFinalCommitted) onFinalCommitted(transcript);
+          } else {
+            interimStr += (interimStr ? ' ' : '') + transcript;
+          }
+        }
+        if (interimStr) {
+          pass1InterimRef.current = interimStr;
+          setLiveSttInterim(interimStr);
+          if (onInterimUpdated) onInterimUpdated(interimStr);
+        }
+      };
+
+      rec.onerror = (ev: any) => {
+        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') {
+          browserSttRef.current = null;
+        }
+      };
+
+      rec.onend = () => {
+        if (isActiveGetter() && browserSttRef.current === rec) {
+          window.setTimeout(() => {
+            if (isActiveGetter() && browserSttRef.current === rec) {
+              try {
+                rec.start();
+              } catch {}
+            }
+          }, 120);
+        }
+      };
+
+      rec.start();
+      browserSttRef.current = rec;
+      return rec;
+    } catch {
+      return null;
+    }
+  };
+
+  const stopBrowserPass1Recognizer = async () => {
+    const rec = browserSttRef.current;
+    browserSttRef.current = null;
+    if (rec) {
+      try {
+        rec.onend = null;
+        rec.stop();
+      } catch {}
+      // Wait 180ms so the browser's final onresult event after rec.stop() is delivered
+      await new Promise((r) => window.setTimeout(r, 180));
+    }
+  };
+
+  // Record a Voice Clip in Live STT Tab to Transcribe (or Transcribe & Score)
+  const startSttClipRecording = async () => {
+    try {
+      setErrorMsg(null);
+      pass1InterimRef.current = '';
+      setLiveSttInterim('');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      liveSttChunksRef.current = [];
+
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
+
+      processor.onaudioprocess = (e) => {
+        if (!isSttClipRef.current) return;
+        const ch = new Float32Array(e.inputBuffer.getChannelData(0));
+        liveSttChunksRef.current.push(ch);
+
+        let sum = 0;
+        for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+        const rms = Math.sqrt(sum / ch.length);
+        setLiveMicLevel(Math.min(100, Math.round(rms * 420)));
+      };
+
+      source.connect(processor);
+      processor.connect(ctx.destination);
+
+      mediaStreamRef.current = stream;
+      audioCtxRef.current = ctx;
+      processorRef.current = processor;
+      isSttClipRef.current = true;
+      setIsSttRecordingClip(true);
+      triggerTone(660, 0.07);
+
+      startBrowserPass1Recognizer(selectedLang, () => isSttClipRef.current);
+    } catch (err: any) {
+      setErrorMsg(`Microphone error: ${err?.message || 'Please allow microphone access'}`);
+    }
+  };
+
+  const stopSttClipRecording = async (alsoScorePronunciation: boolean) => {
+    if (!isSttClipRef.current) return;
+    isSttClipRef.current = false;
+    setIsSttRecordingClip(false);
+    setLiveMicLevel(0);
+    triggerTone(440, 0.07);
+    await stopBrowserPass1Recognizer();
+
+    const inRate = audioCtxRef.current?.sampleRate || 48000;
+    if (processorRef.current) processorRef.current.disconnect();
+    if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+    if (audioCtxRef.current) {
+      try {
+        await audioCtxRef.current.close();
+      } catch {}
+    }
+
+    const merged = mergeBuffers(liveSttChunksRef.current);
+    if (merged.length < 1600) {
+      setErrorMsg('Recording was too short. Please speak for at least 1 second.');
+      return;
+    }
+    const ds16k = downsampleBuffer(merged, inRate, 16000);
+    const trimmed = trimSilenceClientSide(ds16k, 16000);
+    recordedSamplesRef.current = trimmed;
+    const wavBlob = encodeMono16kWav(trimmed, 16000);
+    if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+    setRecordedAudioUrl(URL.createObjectURL(wavBlob));
+
+    if (pass1InterimRef.current.trim()) {
+      pass1CommittedRef.current = [...pass1CommittedRef.current, pass1InterimRef.current.trim()];
+      pass1InterimRef.current = '';
+      setLiveSttFinalList([...pass1CommittedRef.current]);
+      setLiveSttInterim('');
+    }
+
+    const capturedText = pass1CommittedRef.current.join(' ').trim();
+    if (capturedText && !alsoScorePronunciation) {
+      return;
+    }
+    if (capturedText && alsoScorePronunciation) {
+      setReferenceText(capturedText);
+      await submitAudioForAssessment(wavBlob, 'recorded_stt_16k.wav');
+      return;
+    }
+
+    await transcribeOrScoreWavBlob(wavBlob, 'recorded_stt_16k.wav', alsoScorePronunciation);
+  };
+
   const verifyUtteranceWithWhisperPass2 = async (
     utteranceSamples16k: Float32Array,
     lang: string,
@@ -1192,19 +1306,27 @@ export default function App() {
     // For low-resource Whisper scripts (like Bengali/Indic) where Pass-1 native browser ASR
     // already captured a clean script transcript, lock in Pass-1 immediately and only use
     // Whisper Pass-2 when Pass-1 is empty or when Whisper has high confidence (>= 0.80).
+    const commitFinalSentence = (textToCommit: string, confVal = 0.94) => {
+      const clean = textToCommit.trim();
+      if (!clean) return;
+      const cur = pass1CommittedRef.current;
+      if (cur.length === 0 || cur[cur.length - 1] !== clean) {
+        pass1CommittedRef.current = [...cur, clean];
+      }
+      pass1InterimRef.current = '';
+      setLiveSttFinalList([...pass1CommittedRef.current]);
+      setLiveSttInterim('');
+      setLiveSttConfidence(confVal);
+    };
+
     const preferPass1ForScript = ['bn', 'ta', 'te', 'mr', 'gu', 'ur', 'hi'].includes(cleanLang);
     if (preferPass1ForScript && cleanDraft.length > 1) {
-      setLiveSttFinalList((prev) => [...prev, cleanDraft]);
-      setLiveSttInterim('');
-      setLiveSttConfidence(0.94);
+      commitFinalSentence(cleanDraft, 0.94);
       return;
     }
 
     if (utteranceSamples16k.length < 2400) {
-      if (cleanDraft) {
-        setLiveSttFinalList((prev) => [...prev, cleanDraft]);
-        setLiveSttInterim('');
-      }
+      if (cleanDraft) commitFinalSentence(cleanDraft, 0.92);
       return;
     }
 
@@ -1239,18 +1361,15 @@ export default function App() {
             ? data.stt_confidence
             : 0.92;
         if (whisperText && (!cleanDraft || conf >= 0.65)) {
-          setLiveSttFinalList((prev) => [...prev, whisperText]);
-          setLiveSttInterim('');
-          setLiveSttConfidence(conf);
+          commitFinalSentence(whisperText, conf);
+          setIsPass2Verifying(false);
           return;
         }
       }
     } catch {}
     // Fallback: commit Pass-1 draft if present
     if (cleanDraft) {
-      setLiveSttFinalList((prev) => [...prev, cleanDraft]);
-      setLiveSttInterim('');
-      setLiveSttConfidence(0.9);
+      commitFinalSentence(cleanDraft, 0.9);
     }
     setIsPass2Verifying(false);
   };
@@ -1266,44 +1385,22 @@ export default function App() {
       const inRate = ctx.sampleRate;
       liveSttChunksRef.current = [];
 
-      // Pass 1: Launch Instant Browser Streaming Recognizer (<30ms word-by-word preview)
+      // Pass 1: Launch Resilient Instant Browser Streaming Recognizer (<30ms word-by-word preview)
       let latestPass1Draft = '';
-      const SpeechRec =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRec) {
-        try {
-          const rec = new SpeechRec();
-          rec.lang = getBcp47Locale(selectedLang);
-          rec.continuous = true;
-          rec.interimResults = true;
-          rec.onresult = (event: any) => {
-            let interimStr = '';
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-              const transcript = event.results[i][0]?.transcript || '';
-              if (event.results[i].isFinal) {
-                latestPass1Draft = transcript;
-                setLiveSttInterim(transcript);
-              } else {
-                interimStr += transcript;
-              }
-            }
-            if (interimStr) {
-              latestPass1Draft = interimStr;
-              setLiveSttInterim(interimStr);
-            }
-          };
-          rec.onerror = () => {};
-          rec.onend = () => {
-            if (isLiveSttRef.current) {
-              try {
-                rec.start();
-              } catch {}
-            }
-          };
-          rec.start();
-          browserSttRef.current = rec;
-        } catch {}
-      }
+      let lastBrowserFinalTs = 0;
+      const hasPass1Rec = Boolean(
+        startBrowserPass1Recognizer(
+          selectedLang,
+          () => isLiveSttRef.current,
+          () => {
+            lastBrowserFinalTs = performance.now();
+            latestPass1Draft = '';
+          },
+          (interim) => {
+            latestPass1Draft = interim;
+          }
+        )
+      );
 
       // Pass 2: Web Audio Adaptive VAD + 160ms Pre-Roll Ring Buffer -> Utterance-Level Whisper
       const source = ctx.createMediaStreamSource(stream);
@@ -1326,6 +1423,13 @@ export default function App() {
         latestPass1Draft = '';
         currentUtteranceChunks = [];
         currentUtteranceSamples = 0;
+
+        // If Pass-1 browser recognizer is active and already committed a final sentence within the last
+        // 1.2s (or is actively streaming a draft), only invoke Server Whisper Pass-2 when Pass-1 has no text!
+        if (hasPass1Rec && (performance.now() - lastBrowserFinalTs < 1400 || draftSnapshot.trim().length > 0)) {
+          return;
+        }
+
         verifyUtteranceWithWhisperPass2(utteranceAudio, selectedLang, draftSnapshot).finally(
           () => setIsPass2Verifying(false)
         );
@@ -1416,12 +1520,12 @@ export default function App() {
     setLiveMicLevel(0);
     triggerTone(440, 0.07);
 
-    if (browserSttRef.current) {
-      try {
-        browserSttRef.current.onend = null;
-        browserSttRef.current.stop();
-      } catch {}
-      browserSttRef.current = null;
+    await stopBrowserPass1Recognizer();
+    if (pass1InterimRef.current.trim()) {
+      pass1CommittedRef.current = [...pass1CommittedRef.current, pass1InterimRef.current.trim()];
+      pass1InterimRef.current = '';
+      setLiveSttFinalList([...pass1CommittedRef.current]);
+      setLiveSttInterim('');
     }
 
     if (processorRef.current) processorRef.current.disconnect();
@@ -3019,6 +3123,8 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    pass1CommittedRef.current = [];
+                    pass1InterimRef.current = '';
                     setLiveSttFinalList([]);
                     setLiveSttInterim('');
                     setLiveSttConfidence(null);

@@ -11,21 +11,17 @@ from app.stt_engines import STT_LANG_MAP, BaseSTTEngine, StreamingSTTSession
 
 logger = logging.getLogger("voice_pronunciation_engine.mode_a_sherpa")
 
-# Native-script initial prompts anchor Whisper's BPE decoder into the right Unicode script
-# (especially critical for Bengali, Hindi, and other Indic/non-Latin scripts on whisper-small)
+# Short 1-word script indicators steer Whisper's BPE decoder into the target Unicode block
+# without causing prompt-continuation hallucinations on short audio clips.
 WHISPER_SCRIPT_PROMPTS: dict[str, str] = {
-    "bn": "বাংলা ভাষায় স্পষ্ট কথোপকথন। নমস্কার, আপনি কেমন আছেন? আমি বাংলায় কথা বলতে ভালোবাসি। ধন্যবাদ।",
-    "hi": "हिंदी में स्पष्ट बातचीत। नमस्ते, आप कैसे हैं? धन्यवाद।",
-    "ta": "வணக்கம், நீங்கள் எப்படி இருக்கிறீர்கள்? நன்றி.",
-    "te": "నమస్కారం, మీరు ఎలా ఉన్నారు? ధన్యవాదాలు.",
-    "mr": "नमस्कार, तुम्ही कसे आहात? धन्यवाद.",
-    "gu": "નમસ્તે, તમે કેમ છો? આભાર.",
-    "ur": "السلام علیکم، آپ کیسے ہیں؟ شکریہ۔",
-    "ar": "مرحباً، كيف حالك اليوم؟ شكراً جزيلاً.",
-    "de": "Guten Morgen, wie geht es Ihnen? Ich freue mich auf unsere Zusammenarbeit.",
-    "en": "Hello, how are you doing today? Let's practice clear pronunciation.",
-    "es": "Hola, buenos días, ¿cómo estás hoy? Muchas gracias.",
-    "fr": "Bonjour, comment allez-vous aujourd'hui ? Merci beaucoup.",
+    "bn": "বাংলা",
+    "hi": "हिन्दी",
+    "ta": "தமிழ்",
+    "te": "తెలుగు",
+    "mr": "मराठी",
+    "gu": "ગુજરાતી",
+    "ur": "اردو",
+    "ar": "العربية",
 }
 
 INDIC_AND_MULTIBYTE_LANGS = frozenset(
@@ -237,20 +233,20 @@ class SherpaCpuEngine(BaseSTTEngine):
                 waveform_1d,
                 language=iso_lang,
                 initial_prompt=script_prompt,
-                beam_size=3 if is_multibyte else 1,
-                best_of=3 if is_multibyte else 1,
-                temperature=0.0,
+                beam_size=2 if is_multibyte else 1,
+                best_of=2 if is_multibyte else 1,
+                temperature=(0.0, 0.2) if is_multibyte else 0.0,
                 condition_on_previous_text=False,
                 vad_filter=use_silero_vad,
                 vad_parameters=dict(
-                    threshold=0.40,
-                    min_speech_duration_ms=110,
+                    threshold=0.38,
+                    min_speech_duration_ms=100,
                     min_silence_duration_ms=250,
-                    speech_pad_ms=110,
+                    speech_pad_ms=120,
                 ),
-                no_speech_threshold=0.60,
+                no_speech_threshold=0.62,
                 log_prob_threshold=-1.2 if is_multibyte else -1.0,
-                compression_ratio_threshold=4.0 if is_multibyte else 2.4,
+                compression_ratio_threshold=4.2 if is_multibyte else 2.4,
                 without_timestamps=True,
             )
             texts: list[str] = []
