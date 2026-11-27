@@ -236,9 +236,9 @@ def create_stt_engine(settings: Settings) -> BaseSTTEngine:
         sherpa_dir=settings.mode_a_sherpa_dir,
         nemotron_dir=settings.mode_a_nemotron_dir,
         nemotron_repo=settings.mode_a_nemotron_repo,
-        engine_variant=settings.mode_a_engine,
+        engine_variant="nemotron" if settings.mode_a_engine in ("nemotron", "whisper") else settings.mode_a_engine,
         fallback_whisper_model=settings.mode_a_cpu_model,
         cpu_threads=settings.mode_a_cpu_threads,
-        force_whisper=(settings.mode_a_engine == "whisper"),
+        force_whisper=False,
         download_root=settings.mode_b_models_dir / "whisper",
     )

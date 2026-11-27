@@ -7,7 +7,8 @@ services:
         TARGET_DEVICE: cpu
     restart: unless-stopped
     environment:
-      MODE_A_ENABLED: "false"
+      MODE_A_ENABLED: "true"
+      MODE_A_ENGINE: "nemotron"
       MODE_B_DEVICE: cpu
       MODE_B_MODEL: facebook/wav2vec2-lv-60-espeak-cv-ft
       # MODE_B_PROCESS_WORKERS=0 shares a single INT8 ONNX session in memory (~600MB RAM saved)

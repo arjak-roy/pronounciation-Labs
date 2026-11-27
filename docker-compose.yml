@@ -7,11 +7,11 @@ services:
         TARGET_DEVICE: cpu
     environment:
       MODE_A_DEVICE: cpu
-      MODE_A_ENGINE: sherpa
+      MODE_A_ENGINE: nemotron
       MODE_B_DEVICE: cpu
-      MODE_B_MODEL: facebook/wav2vec2-xlsr-53-espeak-cv-ft
+      MODE_B_MODEL: facebook/wav2vec2-lv-60-espeak-cv-ft
       MODE_B_INTRA_OP_THREADS: 2
-      MODE_B_PROCESS_WORKERS: 2
+      MODE_B_PROCESS_WORKERS: 0
     volumes:
       - ./models:/app/models
     ports:
