@@ -182,6 +182,13 @@ function ipaToViseme(ipa: string): string {
   return 'neutral';
 }
 
+const INTONATION_LABELS: Record<string, string> = {
+  falling_statement: 'falls at the end',
+  rising_question: 'rises at the end',
+  flat_monotone: 'stays flat',
+  expressive: 'expressive',
+};
+
 function friendlyVisemeLabel(viseme: string): string {
   switch (viseme) {
     case 'fv':
@@ -249,6 +256,8 @@ export default function App() {
   const [serverOnline, setServerOnline] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showFilterModal, setShowFilterModal] = useState<boolean>(false);
+  const [showMoreModal, setShowMoreModal] = useState<boolean>(false);
+  const [showEngineChoice, setShowEngineChoice] = useState<boolean>(false);
   const [autoStopVad, setAutoStopVad] = useState<boolean>(true);
   const [soundEffectsOn, setSoundEffectsOn] = useState<boolean>(true);
 
@@ -337,14 +346,14 @@ export default function App() {
   const isSttClipRef = useRef<boolean>(false);
 
   // --- Learner Gamification State ---
-  const [xp, setXp] = useState<number>(() => Number(localStorage.getItem('gts_xp') || '120'));
-  const [streak, setStreak] = useState<number>(() => Number(localStorage.getItem('gts_streak') || '2'));
+  const [xp, setXp] = useState<number>(() => Number(localStorage.getItem('gts_xp') || '0'));
+  const [streak, setStreak] = useState<number>(() => Number(localStorage.getItem('gts_streak') || '0'));
 
   // --- 3D Avatar Coach State ---
   const [characterId, setCharacterId] = useState<string>('girl-3d');
   const [mouthViseme, setMouthViseme] = useState<string>('neutral');
   const [coachBubble, setCoachBubble] = useState<string>(
-    '👋 Tap "Listen to Coach" to hear the phrase, then tap "Speak Now" to practice!'
+    '👋 Tap "Listen" to hear the phrase, then tap "Speak" to practice!'
   );
   const avatarHostRef = useRef<HTMLDivElement | null>(null);
   const avatarRuntimeRef = useRef<any>(null);
@@ -756,7 +765,7 @@ export default function App() {
         avatarRuntimeRef.current.setActivity('idle');
         setAvatarViseme('neutral');
       }
-      setCoachBubble('🎙️ Your turn! Tap "Speak Now" and repeat it naturally.');
+      setCoachBubble('🎙️ Your turn! Tap "Speak" and repeat it naturally.');
       if (onFinish) onFinish();
     };
 
@@ -1020,7 +1029,7 @@ export default function App() {
           setLiveSttFinalList([data.detected_transcript]);
           setLiveSttInterim('');
           setLastWhisperText(data.detected_transcript);
-          setLastSttSource(`🧠 Server faster-whisper-small (INT8) · ${elapsed}ms`);
+          setLastSttSource(`🧠 Our server · ${elapsed}ms`);
           if (typeof data.stt_confidence === 'number') {
             setLiveSttConfidence(data.stt_confidence);
           }
@@ -1067,7 +1076,7 @@ export default function App() {
           setLiveSttFinalList([text]);
           setLiveSttInterim('');
           setLastWhisperText(text);
-          setLastSttSource(`🧠 Server faster-whisper-small (INT8) · ${elapsed}ms`);
+          setLastSttSource(`🧠 Our server · ${elapsed}ms`);
           if (conf !== null) setLiveSttConfidence(conf);
         } else {
           setErrorMsg('No clear speech detected in the audio.');
@@ -1165,7 +1174,7 @@ export default function App() {
             setLiveSttInterim('');
             setLiveSttConfidence(conf);
             setLastBrowserText(pass1CommittedRef.current.join(' '));
-            setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
+            setLastSttSource('⚡ Your browser');
             if (onFinalCommitted) onFinalCommitted(transcript);
           } else {
             interimStr += (interimStr ? ' ' : '') + transcript;
@@ -1301,7 +1310,7 @@ export default function App() {
       setLiveSttFinalList([...pass1CommittedRef.current]);
       setLiveSttInterim('');
       setLastBrowserText(pass1CommittedRef.current.join(' '));
-      setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
+      setLastSttSource('⚡ Your browser');
     }
 
     // In Hybrid mode on Record to Transcribe, also run Server Whisper in the background so you can see both!
@@ -1324,10 +1333,10 @@ export default function App() {
             if (!preferPass1 || !pass1CommittedRef.current.join(' ').trim()) {
               pass1CommittedRef.current = [wText];
               setLiveSttFinalList([wText]);
-              setLastSttSource(`🧠 Pass 2: Server faster-whisper-small (INT8) · ${elapsed}ms`);
+              setLastSttSource(`🧠 Double-checked by our server · ${elapsed}ms`);
             } else {
               setLastSttSource(
-                `🔄 Hybrid: Showing Pass 1 Native + Server Whisper (${elapsed}ms) Ready Below`
+                `🔄 Both versions heard (${elapsed}ms) shown below`
               );
             }
           }
@@ -1376,7 +1385,7 @@ export default function App() {
       if (cleanDraft) {
         commitFinalSentence(cleanDraft, 0.94);
         setLastBrowserText(pass1CommittedRef.current.join(' '));
-        setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
+        setLastSttSource('⚡ Your browser');
       }
       return;
     }
@@ -1429,11 +1438,11 @@ export default function App() {
 
           if (!preferPass1) {
             commitFinalSentence(whisperText, conf);
-            setLastSttSource(`🧠 Pass 2: Server faster-whisper-small (INT8) · ${elapsed}ms`);
+            setLastSttSource(`🧠 Double-checked by our server · ${elapsed}ms`);
           } else {
             if (cleanDraft) commitFinalSentence(cleanDraft, 0.94);
             setLastSttSource(
-              `🔄 Hybrid: Pass 1 Native Active + Server Whisper (${elapsed}ms) Compared Below`
+              `🔄 Both versions heard (${elapsed}ms) shown below`
             );
           }
           setIsPass2Verifying(false);
@@ -1444,7 +1453,7 @@ export default function App() {
     // Fallback: commit Pass-1 draft if present
     if (cleanDraft) {
       commitFinalSentence(cleanDraft, 0.9);
-      setLastSttSource('⚡ Pass 1: Browser Native ASR (Fallback)');
+      setLastSttSource('⚡ Your browser');
     }
     setIsPass2Verifying(false);
   };
@@ -1594,7 +1603,7 @@ export default function App() {
       setLiveSttFinalList([...pass1CommittedRef.current]);
       setLiveSttInterim('');
       setLastBrowserText(pass1CommittedRef.current.join(' '));
-      setLastSttSource('⚡ Pass 1: Browser Native ASR (<30ms)');
+      setLastSttSource('⚡ Your browser');
     }
 
     if (processorRef.current) processorRef.current.disconnect();
@@ -1904,7 +1913,7 @@ export default function App() {
                   const firstForLang = libraryItems.find((i) => i.language === newLang);
                   if (firstForLang) selectLibraryItemForPractice(firstForLang);
                 }}
-                title="Select Practice & Live STT Language"
+                title="Choose your language"
                 style={{
                   marginTop: 1,
                   padding: '1px 4px',
@@ -1958,7 +1967,7 @@ export default function App() {
               }}
             >
               <Mic size={13} style={{ flexShrink: 0 }} />
-              <span>Live STT</span>
+              <span>Free talk</span>
             </button>
             <button
               type="button"
@@ -1971,7 +1980,7 @@ export default function App() {
               }}
             >
               <BookOpen size={13} style={{ flexShrink: 0 }} />
-              <span>Library ({filteredItems.length})</span>
+              <span>Phrases</span>
             </button>
             <button
               type="button"
@@ -1996,7 +2005,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setShowSettingsModal(true)}
-              title="Audio & Connection Settings"
+              title="Settings"
               style={{
                 width: 34,
                 height: 34,
@@ -2129,7 +2138,7 @@ export default function App() {
                         cursor: 'pointer',
                       }}
                     >
-                      {t === 'all' ? 'All Items' : t === 'word' ? '🔤 Single Words' : '💬 Phrases'}
+                      {t === 'all' ? 'All items' : t === 'word' ? '🔤 Single Words' : '💬 Phrases'}
                     </button>
                   ))}
 
@@ -2279,6 +2288,7 @@ export default function App() {
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
                 >
                   <select
+                    className="tv-inline-only"
                     value={characterId}
                     onChange={(e) => setCharacterId(e.target.value)}
                     style={{
@@ -2393,10 +2403,10 @@ export default function App() {
                     🤔
                   </div>
                   <div style={{ fontSize: 20, fontWeight: 900 }}>
-                    {CHARACTERS.find((ch) => ch.id === characterId)?.label || 'Coach'} is Analyzing Your Voice...
+                    {CHARACTERS.find((ch) => ch.id === characterId)?.label || 'Coach'} is analyzing your voice...
                   </div>
                   <div style={{ fontSize: 13, color: c.muted, maxWidth: 380, lineHeight: 1.45 }}>
-                    Checking your mouth shapes, multi-syllable word stress, and smooth word flow for{' '}
+                    Checking your sounds, word stress, and smooth word flow for{' '}
                     <strong>“{referenceText}”</strong>
                   </div>
                   <div
@@ -2408,8 +2418,8 @@ export default function App() {
                       marginTop: 4,
                     }}
                   >
-                    <Pill tone="green">✓ Audio Captured</Pill>
-                    <Pill tone="orange">⏳ Scoring Sounds & Stress...</Pill>
+                    <Pill tone="green">✓ Audio captured</Pill>
+                    <Pill tone="orange">⏳ Scoring sounds and stress...</Pill>
                   </div>
                 </div>
               )}
@@ -2470,6 +2480,7 @@ export default function App() {
                 />
                 <button
                   type="button"
+                  className="tv-inline-only"
                   onClick={() => setSpeechSpeed((s) => (s === 1.0 ? 0.75 : 1.0))}
                   title="Toggle Normal (1.0x) vs Slow (0.75x) Coach Voice"
                   style={{
@@ -2484,7 +2495,7 @@ export default function App() {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {speechSpeed === 1.0 ? '⚡ Normal 1.0x' : '🐢 Slow 0.75x'}
+                  {speechSpeed === 1.0 ? '⚡ Normal' : '🐢 Slow'}
                 </button>
               </div>
 
@@ -2690,7 +2701,7 @@ export default function App() {
                   onClick={() => speakCoachPhrase()}
                   disabled={isRecording || isAnalyzing}
                 >
-                  <Volume2 size={17} /> 1. Listen
+                  <Volume2 size={17} /> Listen
                 </ChunkyButton>
 
                 <div className="tv-speak-main-btn" style={{ display: 'flex' }}>
@@ -2701,21 +2712,23 @@ export default function App() {
                       onClick={startRecording}
                       disabled={isAnalyzing}
                     >
-                      <Mic size={17} /> {isAnalyzing ? 'Scoring...' : '2. Speak Now'}
+                      <Mic size={17} /> {isAnalyzing ? 'Scoring...' : 'Speak'}
                     </ChunkyButton>
                   ) : (
                     <ChunkyButton tone="red" fullWidth onClick={stopRecordingAndScore}>
-                      <Square size={17} /> Stop & Score
+                      <Square size={17} /> Stop and score
                     </ChunkyButton>
                   )}
                 </div>
 
+                {/* On phones these three live in the "More" sheet; on larger screens they stay inline. */}
+                <div className="tv-inline-only" style={{ display: 'contents' }}>
                 <ChunkyButton
                   tone="navy"
                   onClick={startGuidedPractice}
                   disabled={isRecording || isAnalyzing}
                 >
-                  <Sparkles size={16} /> Guided 3-2-1
+                  <Sparkles size={16} /> Count me in (3-2-1)
                 </ChunkyButton>
 
                 {recordedAudioUrl && (
@@ -2752,9 +2765,16 @@ export default function App() {
                       color: c.muted,
                     }}
                   >
-                    <Upload size={14} /> Upload Audio
+                    <Upload size={14} /> Upload a recording
                   </span>
                 </label>
+                </div>
+
+                <div className="tv-more-only">
+                  <ChunkyButton tone="soft" fullWidth onClick={() => setShowMoreModal(true)}>
+                    <SlidersHorizontal size={16} /> More
+                  </ChunkyButton>
+                </div>
               </div>
             </GameCard>
           </div>
@@ -2792,7 +2812,7 @@ export default function App() {
                     size="sm"
                     onClick={() => speakCoachPhrase(currentInspectWord.word)}
                   >
-                    <Volume2 size={14} /> Hear Coach Say “{currentInspectWord.word}”
+                    <Volume2 size={14} /> Hear coach say “{currentInspectWord.word}”
                   </ChunkyButton>
                   {recordedAudioUrl && typeof currentInspectWord.start_ms === 'number' && (
                     <ChunkyButton
@@ -2829,15 +2849,15 @@ export default function App() {
                       }}
                     >
                       <span style={{ fontWeight: 900, fontSize: 13, color: '#7C3AED' }}>
-                        🎵 Word Stress Rhythm ({currentInspectWord.word_stress.syllable_count}{' '}
-                        Syllables)
+                        🎵 Which part to press ({currentInspectWord.word_stress.syllable_count}{' '}
+                        syllables)
                       </span>
                       <Pill
                         tone={currentInspectWord.word_stress.stress_correct ? 'green' : 'orange'}
                       >
                         {currentInspectWord.word_stress.stress_correct
-                          ? '✅ Natural Stress Rhythm'
-                          : '💡 Stress Beat Shifted'}
+                          ? '✅ Natural stress'
+                          : '💡 Press a different part'}
                       </Pill>
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
@@ -2862,8 +2882,7 @@ export default function App() {
                             /{isPrimary ? 'ˈ' : ''}
                             {s.syllable_ipa}/ ·{' '}
                             <span style={{ fontSize: 11, color: c.muted }}>
-                              {isPrimary ? 'STRESSED (Longer & Louder)' : 'Relaxed'}
-                              {s.duration_ms ? ` · ${s.duration_ms}ms` : ''}
+                              {isPrimary ? 'Stressed' : 'Relaxed'}
                             </span>
                           </div>
                         );
@@ -2920,6 +2939,11 @@ export default function App() {
                         cursor: 'pointer',
                       }}
                     >
+                      {guide && (
+                        <div style={{ fontSize: 12, fontWeight: 800, color: '#0D3B84', marginBottom: 3 }}>
+                          {guide.name} (as in “{guide.example}”)
+                        </div>
+                      )}
                       <div
                         style={{
                           display: 'flex',
@@ -2928,7 +2952,7 @@ export default function App() {
                           marginBottom: 4,
                         }}
                       >
-                        <span style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 900 }}>
+                        <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, opacity: 0.8 }}>
                           /{expectedSym}/ {hasErr ? `→ /${heardSym}/` : ''}
                         </span>
                         {score !== null && (
@@ -2944,14 +2968,8 @@ export default function App() {
                         )}
                       </div>
 
-                      {guide && (
-                        <div style={{ fontSize: 11, fontWeight: 800, color: '#0D3B84', marginBottom: 3 }}>
-                          {guide.name} (as in “{guide.example}”)
-                        </div>
-                      )}
-
                       <div style={{ fontSize: 12, color: c.text, lineHeight: 1.4 }}>
-                        {diffTip || guide?.howTo || 'Tap to preview mouth shape on the 3D Coach.'}
+                        {diffTip || guide?.howTo || 'Tap to see the mouth shape.'}
                       </div>
                     </div>
                   );
@@ -2980,11 +2998,13 @@ export default function App() {
                       }}
                     >
                       <span style={{ fontWeight: 900, fontSize: 13, color: '#0284C7' }}>
-                        🌊 Connected Speech & Word Flow (
+                        🌊 Word flow (
                         {assessResult.connected_speech.linking_score}%)
                       </span>
                       <Pill tone="blue">
-                        Melody: {assessResult.connected_speech.intonation_type.replace('_', ' ')}
+                        Voice melody:{' '}
+                        {INTONATION_LABELS[assessResult.connected_speech.intonation_type] ||
+                          assessResult.connected_speech.intonation_type.replace('_', ' ')}
                       </Pill>
                     </div>
                     <div style={{ fontSize: 12, marginBottom: 8 }}>
@@ -3066,12 +3086,12 @@ export default function App() {
                 🤔
               </div>
               <div style={{ fontSize: 19, fontWeight: 900 }}>
-                Transcribing & Scoring Your Free Speech...
+                Transcribing and scoring your free speech...
               </div>
               <div style={{ fontSize: 13, color: c.muted, maxWidth: 380 }}>
-                Running <strong>faster-whisper-small (INT8)</strong> in{' '}
+                Listening in{' '}
                 {LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'} and scoring
-                every phoneme & syllable stress beat
+                every sound and word stress
               </div>
             </div>
           )}
@@ -3088,10 +3108,10 @@ export default function App() {
           >
             <div>
               <div style={{ fontSize: 19, fontWeight: 900 }}>
-                🎙️ Live Speech-to-Text & Free-Speak Coach
+                🎙️ Free talk
               </div>
               <div style={{ fontSize: 12.5, color: c.muted }}>
-                Speak freely in your chosen language — watch live transcription appear and score your pronunciation
+                Speak freely in your chosen language. Your words appear as you talk, and you can score your pronunciation.
               </div>
             </div>
 
@@ -3099,14 +3119,14 @@ export default function App() {
               {isLiveSttStreaming && (
                 <Pill tone={vadVoiceActive ? 'green' : isPass2Verifying ? 'orange' : 'slate'}>
                   {vadVoiceActive
-                    ? '🟢 Pass 1: Live Words (<30ms)'
+                    ? '🟢 Hearing your words'
                     : isPass2Verifying
-                    ? '🧠 Pass 2: Whisper Verifying...'
-                    : '⚪ VAD: Waiting for Voice'}
+                    ? '🧠 Double-checking...'
+                    : '⚪ Waiting for your voice'}
                 </Pill>
               )}
               <Pill tone={modeAReady ? 'green' : 'orange'}>
-                {modeAReady ? '🟢 Two-Pass Hybrid STT' : '⚡ Hybrid Whisper STT'}
+                {modeAReady ? '🟢 Ready' : '⚡ Getting ready'}
               </Pill>
               <select
                 value={selectedLang === 'all' ? 'de' : selectedLang}
@@ -3131,7 +3151,41 @@ export default function App() {
             </div>
           </div>
 
-          {/* Engine Mode Selector Strip: Hybrid vs Pure Server Whisper vs Pure Browser Native */}
+          {/* Listening method (engine choice) lives under Advanced so learners are not asked to pick an engine. */}
+          <button
+            type="button"
+            onClick={() => setShowEngineChoice((v) => !v)}
+            aria-expanded={showEngineChoice}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              width: '100%',
+              marginBottom: 8,
+              padding: '8px 12px',
+              borderRadius: 12,
+              border: `1px solid ${c.border}`,
+              background: c.surface,
+              color: c.muted,
+              fontFamily: 'inherit',
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: 'pointer',
+            }}
+          >
+            <span>
+              Advanced: how should we listen?{' '}
+              <strong style={{ color: c.text }}>
+                {sttEngineMode === 'hybrid'
+                  ? 'Both'
+                  : sttEngineMode === 'whisper_only'
+                  ? 'Our server'
+                  : 'This browser'}
+              </strong>
+            </span>
+            <span aria-hidden="true">{showEngineChoice ? '▲' : '▼'}</span>
+          </button>
+          {showEngineChoice && (
           <div
             style={{
               display: 'flex',
@@ -3147,14 +3201,14 @@ export default function App() {
             }}
           >
             <span style={{ fontSize: 12, fontWeight: 800, color: c.muted }}>
-              Transcription Engine:
+              How should we listen?
             </span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {(
                 [
-                  { id: 'hybrid', label: '🔄 Two-Pass Hybrid (Both)' },
-                  { id: 'whisper_only', label: '🧠 Server Whisper Only (EC2)' },
-                  { id: 'browser_only', label: '⚡ Browser Native Only' },
+                  { id: 'hybrid', label: '🔄 Both' },
+                  { id: 'whisper_only', label: '🧠 Our server' },
+                  { id: 'browser_only', label: '⚡ This browser' },
                 ] as const
               ).map((m) => (
                 <button
@@ -3178,6 +3232,7 @@ export default function App() {
               ))}
             </div>
           </div>
+          )}
 
           {/* Live Transcript Display Box */}
           <div
@@ -3201,7 +3256,7 @@ export default function App() {
                     ? `👂 Listening in ${
                         LANGUAGE_OPTIONS.find((l) => l.code === selectedLang)?.label || 'German'
                       }... Speak any sentence!`
-                    : 'Tap "Record to Transcribe" or "Live Stream STT" below and speak in your selected language...'}
+                    : 'Tap "Record a clip" or "Live words" below and speak in your selected language...'}
                 </span>
               ) : (
                 <>
@@ -3232,9 +3287,9 @@ export default function App() {
                     onClick={() => {
                       pass1CommittedRef.current = [lastWhisperText];
                       setLiveSttFinalList([lastWhisperText]);
-                      setLastSttSource('🧠 Using Server faster-whisper-small');
+                      setLastSttSource('🧠 Using our server');
                     }}
-                    title="Click to use Server Whisper transcript"
+                    title="Tap to use this version"
                     style={{
                       padding: '6px 10px',
                       borderRadius: 8,
@@ -3244,7 +3299,7 @@ export default function App() {
                     }}
                   >
                     <div style={{ fontWeight: 900, fontSize: 11, color: '#0284C7' }}>
-                      🧠 Server faster-whisper-small {latencyMs ? `(${latencyMs}ms)` : ''}:
+                      🧠 Heard by our server {latencyMs ? `(${latencyMs}ms)` : ''}:
                     </div>
                     <div style={{ fontWeight: 700, marginTop: 2 }}>{lastWhisperText}</div>
                   </div>
@@ -3254,9 +3309,9 @@ export default function App() {
                     onClick={() => {
                       pass1CommittedRef.current = [lastBrowserText];
                       setLiveSttFinalList([lastBrowserText]);
-                      setLastSttSource('⚡ Using Browser Native ASR');
+                      setLastSttSource('⚡ Using your browser');
                     }}
-                    title="Click to use Browser Native transcript"
+                    title="Tap to use this version"
                     style={{
                       padding: '6px 10px',
                       borderRadius: 8,
@@ -3266,7 +3321,7 @@ export default function App() {
                     }}
                   >
                     <div style={{ fontWeight: 900, fontSize: 11, color: '#16A34A' }}>
-                      ⚡ Browser Native ASR (Pass 1):
+                      ⚡ Heard by your browser (first pass):
                     </div>
                     <div style={{ fontWeight: 700, marginTop: 2 }}>{lastBrowserText}</div>
                   </div>
@@ -3298,7 +3353,7 @@ export default function App() {
                   </>
                 )}
                 {liveSttConfidence !== null && (
-                  <> · Conf: <strong>{Math.round(liveSttConfidence * 100)}%</strong></>
+                  <> · Confidence: <strong>{Math.round(liveSttConfidence * 100)}%</strong></>
                 )}
               </span>
               {(liveSttFinalList.length > 0 || liveSttInterim || lastWhisperText || lastBrowserText) && (
@@ -3323,7 +3378,7 @@ export default function App() {
                     cursor: 'pointer',
                   }}
                 >
-                  Clear Transcript
+                  Clear transcript
                 </button>
               )}
             </div>
@@ -3343,7 +3398,7 @@ export default function App() {
               }}
             >
               <span style={{ fontSize: 12, fontWeight: 800, color: '#F89A1C' }}>
-                {isSttRecordingClip ? '🔴 Recording Clip...' : '🔴 Live Streaming...'}
+                {isSttRecordingClip ? '🔴 Recording a clip...' : '🔴 Live words...'}
               </span>
               <div
                 style={{
@@ -3392,7 +3447,7 @@ export default function App() {
                     onClick={startSttClipRecording}
                     disabled={isAnalyzing}
                   >
-                    <Mic size={17} /> Record to Transcribe
+                    <Mic size={17} /> Record a clip
                   </ChunkyButton>
                 </div>
 
@@ -3401,7 +3456,7 @@ export default function App() {
                   onClick={startLiveSttStream}
                   disabled={isAnalyzing}
                 >
-                  <Sparkles size={16} /> Live Stream STT
+                  <Sparkles size={16} /> Live words
                 </ChunkyButton>
               </>
             )}
@@ -3414,14 +3469,14 @@ export default function App() {
                     fullWidth
                     onClick={() => stopSttClipRecording(false)}
                   >
-                    <Square size={16} /> Stop & Transcribe
+                    <Square size={16} /> Stop and show words
                   </ChunkyButton>
                 </div>
                 <ChunkyButton
                   tone="green"
                   onClick={() => stopSttClipRecording(true)}
                 >
-                  <CheckCircle2 size={16} /> Stop, Transcribe & Score
+                  <CheckCircle2 size={16} /> Stop and score
                 </ChunkyButton>
               </>
             )}
@@ -3434,11 +3489,11 @@ export default function App() {
                     fullWidth
                     onClick={() => stopLiveSttStream(true)}
                   >
-                    <CheckCircle2 size={17} /> Stop & Score Pronunciation
+                    <CheckCircle2 size={17} /> Stop and score
                   </ChunkyButton>
                 </div>
                 <ChunkyButton tone="red" onClick={() => stopLiveSttStream(false)}>
-                  <Square size={16} /> Stop Stream
+                  <Square size={16} /> Stop
                 </ChunkyButton>
               </>
             )}
@@ -3469,7 +3524,7 @@ export default function App() {
                     fontWeight: 900,
                   }}
                 >
-                  <Upload size={15} /> Upload to Transcribe
+                  <Upload size={15} /> Upload a recording
                 </span>
               </label>
             )}
@@ -3503,7 +3558,7 @@ export default function App() {
                     fontWeight: 900,
                   }}
                 >
-                  <Sparkles size={15} /> Upload & Score
+                  <Sparkles size={15} /> Upload and score
                 </span>
               </label>
             )}
@@ -3531,7 +3586,7 @@ export default function App() {
                     }
                   }}
                 >
-                  <Target size={15} /> Open in Practice Studio
+                  <Target size={15} /> Practice this sentence
                 </ChunkyButton>
               )}
           </div>
@@ -3555,19 +3610,19 @@ export default function App() {
           >
             <div>
               <div style={{ fontSize: 20, fontWeight: 900 }}>
-                📚 Word & Phrase Bank
+                📚 Phrases
               </div>
               <div style={{ fontSize: 13, color: c.muted }}>
-                Browse, search, or add your own words and sentences with automatic IPA & syllable stress breakdown
+                Browse, search, or add your own words and sentences. The app works out the sounds and syllable stress for you.
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <ChunkyButton tone="navy" size="sm" onClick={() => openCreateModal('word')}>
-                <Plus size={15} /> Add Single Word
+                <Plus size={15} /> Add single word
               </ChunkyButton>
               <ChunkyButton tone="orange" size="sm" onClick={() => openCreateModal('phrase')}>
-                <Plus size={15} /> Add Phrase / Sentence
+                <Plus size={15} /> Add phrase or sentence
               </ChunkyButton>
             </div>
           </div>
@@ -3639,9 +3694,9 @@ export default function App() {
                 fontSize: 13,
               }}
             >
-              <option value="all">All Types (Words & Phrases)</option>
-              <option value="word">🔤 Single Words Only</option>
-              <option value="phrase">💬 Phrases & Sentences Only</option>
+              <option value="all">All types</option>
+              <option value="word">🔤 Single words</option>
+              <option value="phrase">💬 Phrases</option>
             </select>
 
             <select
@@ -3805,25 +3860,25 @@ export default function App() {
               tone="green"
             />
             <StatTile
-              label="Items Practiced"
+              label="Phrases practiced"
               value={`${libraryStats?.practiced_count ?? practicedCount}`}
               tone="blue"
             />
             <StatTile
-              label="Average Score"
-              value={`${libraryStats?.average_score || 82}%`}
+              label="Average score"
+              value={libraryStats?.average_score ? `${libraryStats.average_score}%` : 'No attempts yet'}
               tone="navy"
             />
-            <StatTile label="Total XP" value={`${xp} XP`} tone="orange" />
+            <StatTile label="XP" value={`${xp} XP`} tone="orange" />
           </div>
 
           {/* Sounds to Focus On */}
           <GameCard style={{ padding: '18px 20px' }}>
             <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>
-              🎯 Sounds & Mouth Shapes Guide
+              🎯 Sound guide
             </div>
             <div style={{ fontSize: 13, color: c.muted, marginBottom: 14 }}>
-              Click any sound below to filter practice words that train that exact mouth placement
+              Tap a sound to practice words that train that exact mouth placement.
             </div>
 
             <div
@@ -3972,7 +4027,13 @@ export default function App() {
               {/* Short Analysis Box inside Popup */}
               {(() => {
                 const words = assessResult.words || [];
-                let topSoundIssue: { word: string; expected: string; heard: string; tip: string } | null = null;
+                let topSoundIssue: {
+                  word: string;
+                  expected: string;
+                  heard: string;
+                  tip: string;
+                  guideName?: string;
+                } | null = null;
                 for (const w of words) {
                   for (const p of w.phonemes || []) {
                     if (typeof p !== 'string' && p.error && p.expected) {
@@ -3981,6 +4042,7 @@ export default function App() {
                         word: w.word,
                         expected: p.expected,
                         heard: p.heard || '∅',
+                        guideName: guide?.name,
                         tip:
                           p.articulatory_diff ||
                           guide?.howTo ||
@@ -4031,7 +4093,7 @@ export default function App() {
                           color: '#0D3B84',
                         }}
                       >
-                        📋 Quick Coach Summary
+                        📋 Quick summary
                       </span>
                       <span style={{ fontSize: 10.5, color: c.muted, fontWeight: 700 }}>
                         {isPlayingMyVoice
@@ -4112,7 +4174,8 @@ export default function App() {
                     <div style={{ fontSize: 12, lineHeight: 1.45, color: c.text }}>
                       {topSoundIssue ? (
                         <>
-                          👄 <strong>Sound Fix ({topSoundIssue.word}):</strong> You said{' '}
+                          👄 <strong>Sound fix ({topSoundIssue.word}):</strong>{' '}
+                          {topSoundIssue.guideName ? `${topSoundIssue.guideName}. ` : ''}You said{' '}
                           <code>/{topSoundIssue.heard}/</code> instead of{' '}
                           <code>/{topSoundIssue.expected}/</code> — {topSoundIssue.tip}
                         </>
@@ -4161,7 +4224,7 @@ export default function App() {
                   size="sm"
                   onClick={() => setShowResultPopup(false)}
                 >
-                  <CheckCircle2 size={15} /> Full Breakdown
+                  <CheckCircle2 size={15} /> See details
                 </ChunkyButton>
                 <ChunkyButton
                   tone="navy"
@@ -4202,7 +4265,7 @@ export default function App() {
                 }}
               >
                 <div style={{ fontSize: 18, fontWeight: 900 }}>
-                  {editingItem ? '✏️ Edit Word or Phrase' : '➕ Add Word or Phrase to Library'}
+                  {editingItem ? '✏️ Edit word or phrase' : '➕ Add word or phrase'}
                 </div>
                 <button
                   type="button"
@@ -4221,7 +4284,7 @@ export default function App() {
               <form onSubmit={handleSaveLibraryItem} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 800, display: 'block', marginBottom: 4 }}>
-                    Word or Phrase Text *
+                    Word or phrase text *
                   </label>
                   <input
                     type="text"
@@ -4370,7 +4433,7 @@ export default function App() {
                     Cancel
                   </ChunkyButton>
                   <ChunkyButton tone="navy" type="submit" disabled={savingItem}>
-                    {savingItem ? 'Saving & Computing IPA...' : 'Save to Library'}
+                    {savingItem ? 'Saving...' : 'Save phrase'}
                   </ChunkyButton>
                 </div>
               </form>
@@ -4401,7 +4464,7 @@ export default function App() {
                   marginBottom: 14,
                 }}
               >
-                <div style={{ fontSize: 18, fontWeight: 900 }}>⚙️ Coach Settings</div>
+                <div style={{ fontSize: 18, fontWeight: 900 }}>⚙️ Settings</div>
                 <button
                   type="button"
                   onClick={() => setShowSettingsModal(false)}
@@ -4419,8 +4482,8 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 14 }}>Theme Appearance</div>
-                    <div style={{ fontSize: 12, color: c.muted }}>Switch Light or Dark studio theme</div>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>Light or dark</div>
+                    <div style={{ fontSize: 12, color: c.muted }}>Switch the look of the app</div>
                   </div>
                   <ChunkyButton tone="soft" size="sm" onClick={toggleTheme}>
                     {isDark ? <Sun size={15} /> : <Moon size={15} />}{' '}
@@ -4430,9 +4493,9 @@ export default function App() {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 14 }}>Auto-Submit When Done</div>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>Score when I stop speaking</div>
                     <div style={{ fontSize: 12, color: c.muted }}>
-                      Automatically score ~1s after you stop speaking
+                      Scores your recording about 1 second after you stop
                     </div>
                   </div>
                   <input
@@ -4445,9 +4508,9 @@ export default function App() {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 14 }}>Audio Cues & Chimes</div>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>Sounds and chimes</div>
                     <div style={{ fontSize: 12, color: c.muted }}>
-                      Play gentle chimes on start, stop, and star rewards
+                      Gentle chimes on start, stop and star rewards
                     </div>
                   </div>
                   <input
@@ -4468,11 +4531,11 @@ export default function App() {
                   }}
                 >
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 14 }}>Speech Scoring Server</div>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>Advanced: connection</div>
                     <div style={{ fontSize: 11, color: c.muted }}>
                       {serverOnline ? '🟢 Connected' : '🟠 Offline'} ·{' '}
-                      {usingServerDb ? 'SQLite Server DB Active' : 'Local Sync Active'}
-                      {latencyMs ? ` · Last: ${latencyMs}ms` : ''}
+                      {usingServerDb ? 'Saved on the server' : 'Saved on this device'}
+                      {latencyMs ? ` · Last response: ${latencyMs}ms` : ''}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -4481,14 +4544,14 @@ export default function App() {
                       size="sm"
                       onClick={() => setApiTarget('aws')}
                     >
-                      ☁️ AWS
+                      ☁️ Cloud
                     </ChunkyButton>
                     <ChunkyButton
                       tone={apiTarget === 'local' ? 'navy' : 'soft'}
                       size="sm"
                       onClick={() => setApiTarget('local')}
                     >
-                      💻 Local
+                      💻 This computer
                     </ChunkyButton>
                   </div>
                 </div>
@@ -4501,6 +4564,143 @@ export default function App() {
       {/* =====================================================================
           MODAL 4: MOBILE PRACTICE FILTER POPUP
          ===================================================================== */}
+      {/* =====================================================================
+          MODAL: MORE PRACTICE OPTIONS (PHONES)
+         ===================================================================== */}
+      {showMoreModal && (
+        <div className="tv-modal-backdrop" onClick={() => setShowMoreModal(false)}>
+          <div
+            className="tv-modal-scroll-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 420 }}
+          >
+            <GameCard innerStyle={{ padding: '18px 20px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 14,
+                }}
+              >
+                <div style={{ fontSize: 18, fontWeight: 900 }}>More options</div>
+                <button
+                  type="button"
+                  onClick={() => setShowMoreModal(false)}
+                  aria-label="Close"
+                  style={{ border: 'none', background: 'transparent', color: c.muted, cursor: 'pointer' }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>Coach voice speed</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <ChunkyButton
+                      tone={speechSpeed === 1.0 ? 'navy' : 'soft'}
+                      size="sm"
+                      onClick={() => setSpeechSpeed(1.0)}
+                    >
+                      Normal
+                    </ChunkyButton>
+                    <ChunkyButton
+                      tone={speechSpeed < 1 ? 'navy' : 'soft'}
+                      size="sm"
+                      onClick={() => setSpeechSpeed(0.75)}
+                    >
+                      Slow
+                    </ChunkyButton>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>Your coach</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {CHARACTERS.map((ch) => (
+                      <ChunkyButton
+                        key={ch.id}
+                        tone={characterId === ch.id ? 'navy' : 'soft'}
+                        size="sm"
+                        onClick={() => setCharacterId(ch.id)}
+                      >
+                        {ch.label}
+                      </ChunkyButton>
+                    ))}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    paddingTop: 12,
+                    borderTop: `1px solid ${c.border}`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <ChunkyButton
+                    tone="navy"
+                    fullWidth
+                    disabled={isRecording || isAnalyzing}
+                    onClick={() => {
+                      setShowMoreModal(false);
+                      startGuidedPractice();
+                    }}
+                  >
+                    <Sparkles size={16} /> Count me in (3-2-1)
+                  </ChunkyButton>
+
+                  <label style={{ cursor: 'pointer', display: 'block' }} title="Upload a WAV file">
+                    <input
+                      type="file"
+                      accept="audio/wav,audio/*"
+                      onChange={(e) => {
+                        setShowMoreModal(false);
+                        handleFileUpload(e);
+                      }}
+                      style={{ display: 'none' }}
+                    />
+                    <span
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        height: 46,
+                        borderRadius: 14,
+                        border: `2px solid ${c.border}`,
+                        background: c.face,
+                        color: c.text,
+                        fontSize: 13,
+                        fontWeight: 900,
+                      }}
+                    >
+                      <Upload size={15} /> Upload a recording
+                    </span>
+                  </label>
+
+                  <ChunkyButton
+                    tone="green"
+                    fullWidth
+                    disabled={!recordedAudioUrl || isRecording || isPlayingMyVoice}
+                    onClick={playMyVoice}
+                  >
+                    <Play size={16} />{' '}
+                    {isPlayingMyVoice
+                      ? 'Playing...'
+                      : recordedAudioUrl
+                      ? 'Hear My Voice'
+                      : 'Hear My Voice (after you record)'}
+                  </ChunkyButton>
+                </div>
+              </div>
+            </GameCard>
+          </div>
+        </div>
+      )}
+
       {showFilterModal && (
         <div
           className="tv-modal-backdrop"
@@ -4521,7 +4721,7 @@ export default function App() {
                 }}
               >
                 <div style={{ fontSize: 18, fontWeight: 900, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <SlidersHorizontal size={18} color="#0D3B84" /> Filter Practice Deck
+                  <SlidersHorizontal size={18} color="#0D3B84" /> Choose phrase
                 </div>
                 <button
                   type="button"
@@ -4656,12 +4856,104 @@ export default function App() {
                   </select>
                 </div>
 
+                {/* Phrase list: on phones the deck strip is hidden, so the choice is made here. */}
+                <div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 6,
+                    }}
+                  >
+                    <label style={{ fontSize: 12, fontWeight: 800 }}>
+                      {filteredItems.length} phrases
+                    </label>
+                    <ChunkyButton
+                      tone="soft"
+                      size="sm"
+                      onClick={() => {
+                        setShowFilterModal(false);
+                        openCreateModal(filterType === 'word' ? 'word' : 'phrase');
+                      }}
+                    >
+                      <Plus size={14} /> Add word or phrase
+                    </ChunkyButton>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                      maxHeight: 280,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {filteredItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          selectLibraryItemForPractice(item);
+                          setShowFilterModal(false);
+                        }}
+                        style={{
+                          textAlign: 'left',
+                          padding: '10px 12px',
+                          borderRadius: 12,
+                          border: `2px solid ${item.id === activeItemId ? '#F89A1C' : c.border}`,
+                          background:
+                            item.id === activeItemId
+                              ? isDark
+                                ? 'rgba(248,154,28,0.14)'
+                                : '#FFFBEB'
+                              : c.surface,
+                          color: c.text,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: 3,
+                          }}
+                        >
+                          <span style={{ fontSize: 11, fontWeight: 800, color: c.muted }}>
+                            {item.item_type === 'word' ? 'Word' : 'Phrase'} · {item.difficulty}
+                          </span>
+                          <StarRow earned={starsForScore(item.best_score || 0)} total={3} size={12} />
+                        </div>
+                        <div style={{ fontWeight: 800, fontSize: 14 }}>{item.text}</div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            fontSize: 11,
+                            color: c.muted,
+                            marginTop: 2,
+                          }}
+                        >
+                          <span>{item.focus_phoneme || item.category}</span>
+                          {item.best_score > 0 ? (
+                            <strong style={{ color: '#16A34A' }}>Best: {item.best_score}%</strong>
+                          ) : (
+                            <span>Not practiced yet</span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <ChunkyButton
                   tone="navy"
                   fullWidth
                   onClick={() => setShowFilterModal(false)}
                 >
-                  Show {filteredItems.length} Matching Items
+                  Show {filteredItems.length} phrases
                 </ChunkyButton>
               </div>
             </GameCard>
