@@ -410,7 +410,7 @@ async def transcribe_uploaded_audio(
         samples, _ = load_and_normalize_audio(
             audio_bytes=audio_bytes,
             target_sr=settings.sample_rate,
-            trim_silence=settings.mode_b_trim_silence,
+            trim_silence=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

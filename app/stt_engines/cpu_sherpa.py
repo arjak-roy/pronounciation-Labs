@@ -88,6 +88,13 @@ NEMOTRON_LANG_MAP: dict[str, str] = {
 
 _LANG_TAG_RE = re.compile(r"\s*<[a-z]{2,3}(?:-[A-Z]{2})?>\s*$")
 
+# Deterministic 560ms warm-up pad & 720ms tail flush pad for Nemotron 3.5's 24-layer
+# causal FastConformer encoder: prevents cold-start state clipping on the first word
+# (e.g., "Alles hat ein Ende...") and guarantees the final 560ms chunk is fully decoded.
+_WARMUP_RNG = np.random.default_rng(42)
+_NEMOTRON_LEAD_PAD = _WARMUP_RNG.normal(0.0, 0.0005, int(0.56 * 16000)).astype(np.float32)
+_NEMOTRON_TAIL_PAD = _WARMUP_RNG.normal(0.0, 0.0005, int(0.72 * 16000)).astype(np.float32)
+
 # Short 1-word script indicators steer Whisper's BPE decoder into the target Unicode block
 # for languages not in Nemotron 3.5's 40 locales (such as Bengali `bn`).
 WHISPER_SCRIPT_PROMPTS: dict[str, str] = {
@@ -164,8 +171,16 @@ class SherpaStreamingSession(StreamingSTTSession):
         if self._nemotron_lang:
             try:
                 stream.set_option("language", self._nemotron_lang)
+                stream.set_option("keep_encoder_states", "1")
             except Exception as exc:
                 logger.debug("Could not set stream language option %s: %s", self._nemotron_lang, exc)
+        # Pre-feed 560ms warm-up pad so causal convolution & attention caches are warm before word 1
+        try:
+            stream.accept_waveform(self.sample_rate, _NEMOTRON_LEAD_PAD)
+            while self._recognizer.is_ready(stream):
+                self._recognizer.decode_stream(stream)
+        except Exception:
+            pass
         return stream
 
     def _clean_text(self, raw_result: Any) -> str:
@@ -187,9 +202,8 @@ class SherpaStreamingSession(StreamingSTTSession):
         return text, is_ep
 
     def _flush_sync(self) -> str:
-        # 480ms tail padding flushes the 560ms cache-aware transducer window immediately
-        tail_padding = np.zeros(int(0.48 * self.sample_rate), dtype=np.float32)
-        self._stream.accept_waveform(self.sample_rate, tail_padding)
+        # 720ms tail padding flushes the 560ms cache-aware transducer window completely
+        self._stream.accept_waveform(self.sample_rate, _NEMOTRON_TAIL_PAD)
         self._stream.input_finished()
         while self._recognizer.is_ready(self._stream):
             self._recognizer.decode_stream(self._stream)
@@ -307,9 +321,9 @@ class SherpaCpuEngine(BaseSTTEngine):
                     sample_rate=16000,
                     decoding_method="greedy_search",
                     enable_endpoint_detection=True,
-                    rule1_min_trailing_silence=1.4,
-                    rule2_min_trailing_silence=0.45,
-                    rule3_min_utterance_length=15.0,
+                    rule1_min_trailing_silence=2.4,
+                    rule2_min_trailing_silence=1.1,
+                    rule3_min_utterance_length=20.0,
                     provider="cpu",
                 )
                 self._is_nemotron = True
@@ -426,10 +440,16 @@ class SherpaCpuEngine(BaseSTTEngine):
                 except Exception as exc:
                     logger.debug("Could not set stream language option %s: %s", nemotron_lang, exc)
 
-            stream.accept_waveform(16000, np.ascontiguousarray(waveform_1d, dtype=np.float32))
-            # 480ms tail silence flushes the 560ms right-context chunk in Nemotron 3.5
-            tail = np.zeros(int(0.48 * 16000), dtype=np.float32)
-            stream.accept_waveform(16000, tail)
+            # Gain-normalize quiet microphone clips so mel-spectrogram energy stays in optimal range
+            audio_f32 = np.ascontiguousarray(waveform_1d, dtype=np.float32)
+            peak = float(np.max(np.abs(audio_f32))) if audio_f32.size > 0 else 0.0
+            if 0.015 <= peak < 0.35:
+                audio_f32 = audio_f32 * (0.75 / peak)
+
+            # Prepend 560ms warm-up pad + append 720ms tail flush pad so word 1 and the final word
+            # are never clipped by cold-start causal convolution states or right-context lookahead.
+            padded = np.concatenate([_NEMOTRON_LEAD_PAD, audio_f32, _NEMOTRON_TAIL_PAD])
+            stream.accept_waveform(16000, padded)
             stream.input_finished()
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
