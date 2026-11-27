@@ -340,6 +340,8 @@ export default function App() {
   const [modeAReady, setModeAReady] = useState<boolean>(false);
   const [modeAProvider, setModeAProvider] = useState<string>('Nemotron 3.5 Streaming 0.6B');
   const browserSttRef = useRef<any>(null);
+  const liveWsRef = useRef<WebSocket | null>(null);
+  const wsFinalSegmentsRef = useRef<string[]>([]);
   const pass1CommittedRef = useRef<string[]>([]);
   const pass1InterimRef = useRef<string>('');
   const liveSttChunksRef = useRef<Float32Array[]>([]);
@@ -1492,17 +1494,115 @@ export default function App() {
         );
       }
 
-      // Pass 2: Web Audio Adaptive VAD + 160ms Pre-Roll Ring Buffer -> Utterance-Level Whisper
+      // Pass 2: True Real-Time Binary WebSocket Streaming (/ws/transcribe) to Nemotron 3.5 0.6B (160ms INT8)
+      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      wsFinalSegmentsRef.current = [];
+      let ws: WebSocket | null = null;
+      let wsReady = false;
+      let lastChunkSendTs = performance.now();
+
+      if (sttEngineMode !== 'browser_only') {
+        try {
+          const base = apiBase || window.location.origin;
+          const wsProtocol = base.startsWith('https') ? 'wss:' : 'ws:';
+          const wsHost = base.replace(/^https?:\/\//, '');
+          const wsUrl = `${wsProtocol}//${wsHost}/ws/transcribe?lang=${encodeURIComponent(cleanLang)}`;
+          ws = new WebSocket(wsUrl);
+          ws.binaryType = 'arraybuffer';
+          liveWsRef.current = ws;
+
+          ws.onopen = () => {
+            wsReady = true;
+          };
+          ws.onmessage = (msgEv) => {
+            try {
+              const data = JSON.parse(msgEv.data);
+              const t = (data.transcript || '').trim();
+              if (!t) return;
+              const rtt = Math.max(18, Math.round(performance.now() - lastChunkSendTs));
+              setLatencyMs(rtt);
+              if (typeof data.confidence === 'number') {
+                setLiveSttConfidence(data.confidence);
+              }
+
+              if (data.type === 'interim') {
+                const fullServerPreview = [...wsFinalSegmentsRef.current, t].join(' ').trim();
+                setLastWhisperText(fullServerPreview);
+                if (sttEngineMode === 'whisper_only' || !pass1InterimRef.current) {
+                  setLiveSttInterim(t);
+                }
+                setLastSttSource(`🧠 Live from our server · ${rtt}ms`);
+              } else if (data.type === 'final') {
+                const curWs = wsFinalSegmentsRef.current;
+                if (curWs.length === 0 || curWs[curWs.length - 1] !== t) {
+                  wsFinalSegmentsRef.current = [...curWs, t];
+                }
+                const fullServerText = wsFinalSegmentsRef.current.join(' ').trim();
+                setLastWhisperText(fullServerText);
+
+                const preferPass1 =
+                  sttEngineMode === 'hybrid' &&
+                  ['bn', 'ta', 'te', 'mr', 'gu', 'ur'].includes(cleanLang) &&
+                  pass1CommittedRef.current.length > 0;
+
+                if (!preferPass1) {
+                  pass1CommittedRef.current = [...wsFinalSegmentsRef.current];
+                  pass1InterimRef.current = '';
+                  setLiveSttFinalList([...pass1CommittedRef.current]);
+                  setLiveSttInterim('');
+                  setLastSttSource(`🧠 Live from our server · ${rtt}ms`);
+                } else {
+                  setLastSttSource(`🔄 Both versions heard (${rtt}ms) shown below`);
+                }
+              }
+            } catch {}
+          };
+          ws.onerror = () => {
+            wsReady = false;
+          };
+          ws.onclose = () => {
+            wsReady = false;
+          };
+        } catch {
+          ws = null;
+        }
+      }
+
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(1024, 1, 1);
       let currentUtteranceChunks: Float32Array[] = [];
       let currentUtteranceSamples = 0;
+      let pcm16SendAccumulator: Float32Array[] = [];
+      let pcm16SendSamples = 0;
       let preRollRing: Float32Array[] = [];
       let speechActive = false;
       let silenceSamplesSinceSpeech = 0;
       let noiseFloor = 0.005;
 
+      const sendPcm16OverWebSocket = (floatSamples: Float32Array) => {
+        if (!ws || !wsReady || ws.readyState !== WebSocket.OPEN) return;
+        const pcm16 = new Int16Array(floatSamples.length);
+        for (let i = 0; i < floatSamples.length; i++) {
+          const s = Math.max(-1, Math.min(1, floatSamples[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        lastChunkSendTs = performance.now();
+        ws.send(pcm16.buffer);
+      };
+
       const flushUtteranceToPass2 = () => {
+        if (ws && wsReady && ws.readyState === WebSocket.OPEN) {
+          if (pcm16SendSamples > 0) {
+            sendPcm16OverWebSocket(mergeBuffers(pcm16SendAccumulator));
+            pcm16SendAccumulator = [];
+            pcm16SendSamples = 0;
+          }
+          lastChunkSendTs = performance.now();
+          ws.send(JSON.stringify({ type: 'flush' }));
+          currentUtteranceChunks = [];
+          currentUtteranceSamples = 0;
+          return;
+        }
         if (currentUtteranceSamples < 2400) {
           currentUtteranceChunks = [];
           currentUtteranceSamples = 0;
@@ -1537,7 +1637,7 @@ export default function App() {
         if (!speechActive && rms < noiseFloor * 1.7) {
           noiseFloor = Math.max(0.0025, Math.min(0.016, 0.92 * noiseFloor + 0.08 * rms));
         }
-        const vadThreshold = Math.max(0.011, noiseFloor * 2.5);
+        const vadThreshold = Math.max(0.01, noiseFloor * 2.3);
         const isSpeechFrame = rms >= vadThreshold && zcr < 0.42;
 
         const ds16k = downsampleBuffer(ch, inRate, 16000);
@@ -1550,15 +1650,26 @@ export default function App() {
             liveSttChunksRef.current.push(preRoll);
             currentUtteranceChunks.push(preRoll);
             currentUtteranceSamples += preRoll.length;
+            pcm16SendAccumulator.push(preRoll);
+            pcm16SendSamples += preRoll.length;
           }
           speechActive = true;
           silenceSamplesSinceSpeech = 0;
           liveSttChunksRef.current.push(ds16k);
           currentUtteranceChunks.push(ds16k);
           currentUtteranceSamples += ds16k.length;
+          pcm16SendAccumulator.push(ds16k);
+          pcm16SendSamples += ds16k.length;
 
-          // If user speaks continuously for >5.5s without pausing, checkpoint to Whisper Pass 2
-          if (currentUtteranceSamples >= 88000) {
+          // Stream 80ms binary PCM16 packets (~1280 samples @ 16kHz) immediately over WebSocket
+          if (pcm16SendSamples >= 1280) {
+            sendPcm16OverWebSocket(mergeBuffers(pcm16SendAccumulator));
+            pcm16SendAccumulator = [];
+            pcm16SendSamples = 0;
+          }
+
+          // If user speaks continuously for >8s without pausing, checkpoint segment
+          if (currentUtteranceSamples >= 128000) {
             flushUtteranceToPass2();
           }
         } else if (speechActive) {
@@ -1566,9 +1677,17 @@ export default function App() {
           liveSttChunksRef.current.push(ds16k);
           currentUtteranceChunks.push(ds16k);
           currentUtteranceSamples += ds16k.length;
+          pcm16SendAccumulator.push(ds16k);
+          pcm16SendSamples += ds16k.length;
 
-          // After ~460ms of silence (7360 samples @ 16kHz), VAD endpoints the utterance -> Pass 2 Whisper!
-          if (silenceSamplesSinceSpeech >= 7360) {
+          if (pcm16SendSamples >= 1280) {
+            sendPcm16OverWebSocket(mergeBuffers(pcm16SendAccumulator));
+            pcm16SendAccumulator = [];
+            pcm16SendSamples = 0;
+          }
+
+          // After ~380ms of silence (6080 samples @ 16kHz), flush the streaming transducer!
+          if (silenceSamplesSinceSpeech >= 6080) {
             speechActive = false;
             silenceSamplesSinceSpeech = 0;
             setVadVoiceActive(false);
@@ -1605,6 +1724,17 @@ export default function App() {
     triggerTone(440, 0.07);
 
     await stopBrowserPass1Recognizer();
+    if (liveWsRef.current) {
+      const ws = liveWsRef.current;
+      liveWsRef.current = null;
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'flush' }));
+          await new Promise((r) => window.setTimeout(r, 200));
+          ws.close();
+        } catch {}
+      }
+    }
     if (pass1InterimRef.current.trim()) {
       pass1CommittedRef.current = [...pass1CommittedRef.current, pass1InterimRef.current.trim()];
       pass1InterimRef.current = '';
@@ -1631,8 +1761,8 @@ export default function App() {
     setRecordedAudioUrl(URL.createObjectURL(wavBlob));
 
     if (!andScorePronunciation) {
-      // Final Pass-2 verification if any unverified interim text remains
-      if (liveSttInterim.trim() || liveSttFinalList.length === 0) {
+      // Only fallback to HTTP POST if neither WebSocket nor Browser captured any words
+      if (pass1CommittedRef.current.length === 0 && wsFinalSegmentsRef.current.length === 0) {
         await transcribeOrScoreWavBlob(wavBlob, 'free_speech_16k.wav', false);
       }
       return;

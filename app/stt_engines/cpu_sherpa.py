@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -14,7 +16,7 @@ from app.stt_engines import STT_LANG_MAP, BaseSTTEngine, StreamingSTTSession
 logger = logging.getLogger("voice_pronunciation_engine.mode_a_sherpa")
 
 NEMOTRON_DEFAULT_REPO = (
-    "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
+    "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11"
 )
 NEMOTRON_FILES = (
     "encoder.int8.onnx",
@@ -78,6 +80,15 @@ def ensure_nemotron_onnx_files(
     if all((nemotron_dir / fn).exists() for fn in NEMOTRON_FILES):
         return True
 
+    # Reuse decoder.int8.onnx, joiner.int8.onnx, and tokens.txt from previous 560ms dir if present
+    legacy_dir = nemotron_dir.parent / "nemotron-3.5-0.6b-int8"
+    if legacy_dir.exists() and legacy_dir != nemotron_dir:
+        for shared_fn in ("decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"):
+            src = legacy_dir / shared_fn
+            dst = nemotron_dir / shared_fn
+            if src.exists() and not dst.exists():
+                shutil.copyfile(src, dst)
+
     from huggingface_hub import hf_hub_download
 
     for fn in NEMOTRON_FILES:
@@ -95,7 +106,7 @@ def ensure_nemotron_onnx_files(
 class SherpaStreamingSession(StreamingSTTSession):
     """
     True frame-synchronous causal streaming session backed by `sherpa_onnx.OnlineRecognizer`
-    (NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8 Cache-Aware FastConformer-RNNT or Zipformer).
+    (NVIDIA Nemotron 3.5 ASR Streaming 0.6B 160ms INT8 Cache-Aware FastConformer-RNNT).
     """
 
     def __init__(
@@ -111,6 +122,7 @@ class SherpaStreamingSession(StreamingSTTSession):
         self._nemotron_lang = nemotron_lang
         self._stream = self._create_configured_stream()
         self._last_partial: str = ""
+        self._lock = asyncio.Lock()
 
     def _create_configured_stream(self) -> Any:
         stream = self._recognizer.create_stream()
@@ -129,19 +141,37 @@ class SherpaStreamingSession(StreamingSTTSession):
         ).strip()
         return _LANG_TAG_RE.sub("", text).strip()
 
+    def _ingest_and_decode_sync(self, samples_f32: np.ndarray) -> tuple[str, bool]:
+        self._stream.accept_waveform(self.sample_rate, samples_f32)
+        while self._recognizer.is_ready(self._stream):
+            self._recognizer.decode_stream(self._stream)
+        text = self._clean_text(self._recognizer.get_result(self._stream))
+        is_ep = bool(self._recognizer.is_endpoint(self._stream))
+        if is_ep:
+            self._recognizer.reset(self._stream)
+        return text, is_ep
+
+    def _flush_sync(self) -> str:
+        # 200ms tail padding flushes the 160ms cache-aware transducer window immediately
+        tail_padding = np.zeros(int(0.20 * self.sample_rate), dtype=np.float32)
+        self._stream.accept_waveform(self.sample_rate, tail_padding)
+        self._stream.input_finished()
+        while self._recognizer.is_ready(self._stream):
+            self._recognizer.decode_stream(self._stream)
+        text = self._clean_text(self._recognizer.get_result(self._stream))
+        self.reset()
+        return text
+
     async def ingest_pcm16_bytes(self, pcm16_bytes: bytes) -> list[TranscribeEvent]:
         if not pcm16_bytes or len(pcm16_bytes) < 2:
             return []
 
         usable_len = len(pcm16_bytes) - (len(pcm16_bytes) % 2)
         pcm16 = np.frombuffer(pcm16_bytes[:usable_len], dtype=np.int16)
-        samples_f32 = pcm16.astype(np.float32) / 32768.0
+        samples_f32 = np.ascontiguousarray(pcm16.astype(np.float32) / 32768.0, dtype=np.float32)
 
-        self._stream.accept_waveform(self.sample_rate, samples_f32)
-        while self._recognizer.is_ready(self._stream):
-            self._recognizer.decode_stream(self._stream)
-
-        text = self._clean_text(self._recognizer.get_result(self._stream))
+        async with self._lock:
+            text, is_ep = await asyncio.to_thread(self._ingest_and_decode_sync, samples_f32)
 
         events: list[TranscribeEvent] = []
         if text and text != self._last_partial:
@@ -155,7 +185,7 @@ class SherpaStreamingSession(StreamingSTTSession):
                 )
             )
 
-        if self._recognizer.is_endpoint(self._stream):
+        if is_ep:
             if text:
                 events.append(
                     TranscribeEvent(
@@ -165,21 +195,13 @@ class SherpaStreamingSession(StreamingSTTSession):
                         confidence=0.97,
                     )
                 )
-            self._recognizer.reset(self._stream)
             self._last_partial = ""
 
         return events
 
     async def flush(self) -> TranscribeEvent | None:
-        # Feed 560ms tail padding so the cache-aware transducer window flushes the final word
-        tail_padding = np.zeros(int(0.56 * self.sample_rate), dtype=np.float32)
-        self._stream.accept_waveform(self.sample_rate, tail_padding)
-        self._stream.input_finished()
-        while self._recognizer.is_ready(self._stream):
-            self._recognizer.decode_stream(self._stream)
-
-        text = self._clean_text(self._recognizer.get_result(self._stream))
-        self.reset()
+        async with self._lock:
+            text = await asyncio.to_thread(self._flush_sync)
         if not text:
             return None
         return TranscribeEvent(
@@ -198,16 +220,16 @@ class SherpaStreamingSession(StreamingSTTSession):
 class SherpaCpuEngine(BaseSTTEngine):
     """
     Mode A — Primary Streaming & Utterance STT Engine:
-    - Default (`MODE_A_ENGINE=nemotron`): NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8
+    - Default (`MODE_A_ENGINE=nemotron`): NVIDIA Nemotron 3.5 ASR Streaming 0.6B 160ms INT8
       (`nvidia/nemotron-3.5-asr-streaming-0.6b` via `sherpa-onnx` cache-aware FastConformer-RNNT).
     - Automatically falls back to `faster-whisper-small` INT8 for languages outside Nemotron 3.5's
-      40 locales (such as Bengali `bn`) or when `MODE_A_ENGINE=whisper`.
+      40 locales (such as Bengali `bn`) or when `force_whisper=True`.
     """
 
     def __init__(
         self,
         sherpa_dir: Path = Path("models/sherpa-en"),
-        nemotron_dir: Path = Path("models/nemotron-3.5-0.6b-int8"),
+        nemotron_dir: Path = Path("models/nemotron-3.5-0.6b-160ms-int8"),
         nemotron_repo: str = NEMOTRON_DEFAULT_REPO,
         engine_variant: str = "nemotron",
         fallback_whisper_model: str = "Systran/faster-whisper-small",
@@ -219,7 +241,7 @@ class SherpaCpuEngine(BaseSTTEngine):
         self.nemotron_dir = nemotron_dir
         self.nemotron_repo = nemotron_repo
         self.engine_variant = engine_variant
-        self.cpu_threads = cpu_threads
+        self.cpu_threads = max(int(cpu_threads), os.cpu_count() or 2)
         self.model_id = fallback_whisper_model
         self.download_root = download_root or Path("models/whisper")
         self._recognizer: Any = None
@@ -237,26 +259,26 @@ class SherpaCpuEngine(BaseSTTEngine):
                 tokens_path = nemotron_dir / "tokens.txt"
 
                 logger.info(
-                    "Loading NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8 from %s (threads=%d)...",
+                    "Loading NVIDIA Nemotron 3.5 ASR Streaming 0.6B (160ms INT8) from %s (threads=%d)...",
                     nemotron_dir,
-                    cpu_threads,
+                    self.cpu_threads,
                 )
                 self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
                     tokens=str(tokens_path),
                     encoder=str(encoder_path),
                     decoder=str(decoder_path),
                     joiner=str(joiner_path),
-                    num_threads=cpu_threads,
+                    num_threads=self.cpu_threads,
                     sample_rate=16000,
                     decoding_method="greedy_search",
                     enable_endpoint_detection=True,
-                    rule1_min_trailing_silence=1.8,
-                    rule2_min_trailing_silence=0.55,
+                    rule1_min_trailing_silence=1.4,
+                    rule2_min_trailing_silence=0.45,
                     rule3_min_utterance_length=15.0,
                     provider="cpu",
                 )
                 self._is_nemotron = True
-                logger.info("NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8 ready.")
+                logger.info("NVIDIA Nemotron 3.5 ASR Streaming 0.6B (160ms INT8) ready.")
                 return
             except Exception as exc:
                 logger.warning(
@@ -285,7 +307,7 @@ class SherpaCpuEngine(BaseSTTEngine):
                 encoder=str(encoder_path),
                 decoder=str(decoder_path),
                 joiner=str(joiner_path),
-                num_threads=cpu_threads,
+                num_threads=self.cpu_threads,
                 sample_rate=16000,
                 feature_dim=80,
                 decoding_method="greedy_search",
@@ -320,7 +342,7 @@ class SherpaCpuEngine(BaseSTTEngine):
     @property
     def engine_name(self) -> str:
         if self._recognizer is not None and self._is_nemotron:
-            return "nvidia/nemotron-3.5-asr-streaming-0.6b (sherpa-onnx INT8)"
+            return "nvidia/nemotron-3.5-asr-streaming-0.6b (160ms sherpa-onnx INT8)"
         if self._recognizer is not None:
             return "Sherpa-ONNX Streaming Zipformer INT8 (Real-Time Causal)"
         return f"faster-whisper-cpu-int8 ({self.model_id})"
@@ -370,8 +392,8 @@ class SherpaCpuEngine(BaseSTTEngine):
                     logger.debug("Could not set stream language option %s: %s", nemotron_lang, exc)
 
             stream.accept_waveform(16000, np.ascontiguousarray(waveform_1d, dtype=np.float32))
-            # 560ms tail silence flushes the 560ms right-context chunk in Nemotron 3.5
-            tail = np.zeros(int(0.56 * 16000), dtype=np.float32)
+            # 200ms tail silence flushes the 160ms right-context chunk in Nemotron 3.5
+            tail = np.zeros(int(0.20 * 16000), dtype=np.float32)
             stream.accept_waveform(16000, tail)
             stream.input_finished()
             while self._recognizer.is_ready(stream):
