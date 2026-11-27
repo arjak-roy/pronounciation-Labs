@@ -14,6 +14,7 @@ models/*.onnx
 models/*.onnx.data
 models/tokenizer/
 models/sherpa-en/
+models/nemotron*/
 models/whisper/
 data/*.db
 frontend/node_modules/

@@ -7,6 +7,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 from app.config import get_settings
+from app.stt_engines.cpu_sherpa import ensure_nemotron_onnx_files
 from scripts.export_onnx import export_wav2vec2_dual_onnx
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -34,8 +35,15 @@ def ensure_sherpa_model(sherpa_dir: Path) -> None:
 
 def ensure_models() -> None:
     settings = get_settings()
-    if settings.mode_a_enabled and settings.mode_a_engine == "sherpa":
-        ensure_sherpa_model(settings.mode_a_sherpa_dir)
+    if settings.mode_a_enabled:
+        if settings.mode_a_engine == "nemotron":
+            ensure_nemotron_onnx_files(
+                nemotron_dir=settings.mode_a_nemotron_dir,
+                repo_id=settings.mode_a_nemotron_repo,
+            )
+            logger.info("Mode A Nemotron 3.5 Streaming 0.6B INT8 ready at %s", settings.mode_a_nemotron_dir)
+        elif settings.mode_a_engine == "sherpa":
+            ensure_sherpa_model(settings.mode_a_sherpa_dir)
 
     vocab_file = settings.mode_b_tokenizer_dir / "vocab.json"
     if settings.onnx_cpu_path.exists() and vocab_file.exists():

@@ -17,15 +17,23 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Mode A: Real-Time Live STT (faster-whisper-small INT8 by default) ---
+    # --- Mode A: Real-Time Live STT (NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8 by default) ---
     mode_a_enabled: bool = Field(
         default=True, validation_alias="MODE_A_ENABLED"
     )
     mode_a_device: Literal["cpu", "gpu"] = Field(
         default="cpu", validation_alias="MODE_A_DEVICE"
     )
-    mode_a_engine: Literal["sherpa", "vosk", "qwen", "whisper"] = Field(
-        default="whisper", validation_alias="MODE_A_ENGINE"
+    mode_a_engine: Literal["nemotron", "sherpa", "vosk", "qwen", "whisper"] = Field(
+        default="nemotron", validation_alias="MODE_A_ENGINE"
+    )
+    mode_a_nemotron_repo: str = Field(
+        default="csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
+        validation_alias="MODE_A_NEMOTRON_REPO",
+    )
+    mode_a_nemotron_dir: Path = Field(
+        default=Path("models/nemotron-3.5-0.6b-int8"),
+        validation_alias="MODE_A_NEMOTRON_DIR",
     )
     mode_a_sherpa_dir: Path = Field(
         default=Path("models/sherpa-en"),

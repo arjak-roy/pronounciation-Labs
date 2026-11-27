@@ -338,6 +338,7 @@ export default function App() {
   const [liveSttFinalList, setLiveSttFinalList] = useState<string[]>([]);
   const [liveSttConfidence, setLiveSttConfidence] = useState<number | null>(null);
   const [modeAReady, setModeAReady] = useState<boolean>(false);
+  const [modeAProvider, setModeAProvider] = useState<string>('Nemotron 3.5 Streaming 0.6B');
   const browserSttRef = useRef<any>(null);
   const pass1CommittedRef = useRef<string[]>([]);
   const pass1InterimRef = useRef<string>('');
@@ -413,6 +414,13 @@ export default function App() {
         const hData = await hRes.json();
         setServerOnline(Boolean(hData?.mode_b?.ready));
         setModeAReady(Boolean(hData?.mode_a?.ready));
+        if (typeof hData?.mode_a?.provider === 'string' && hData.mode_a.provider) {
+          setModeAProvider(
+            hData.mode_a.provider.includes('nemotron')
+              ? 'Nemotron 3.5 Streaming 0.6B'
+              : hData.mode_a.provider
+          );
+        }
       } else {
         setServerOnline(false);
         setModeAReady(false);
@@ -3126,7 +3134,7 @@ export default function App() {
                 </Pill>
               )}
               <Pill tone={modeAReady ? 'green' : 'orange'}>
-                {modeAReady ? '🟢 Ready' : '⚡ Getting ready'}
+                {modeAReady ? `🟢 ${modeAProvider}` : '⚡ Getting ready'}
               </Pill>
               <select
                 value={selectedLang === 'all' ? 'de' : selectedLang}

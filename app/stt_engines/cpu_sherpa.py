@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -11,8 +13,46 @@ from app.stt_engines import STT_LANG_MAP, BaseSTTEngine, StreamingSTTSession
 
 logger = logging.getLogger("voice_pronunciation_engine.mode_a_sherpa")
 
+NEMOTRON_DEFAULT_REPO = (
+    "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
+)
+NEMOTRON_FILES = (
+    "encoder.int8.onnx",
+    "decoder.int8.onnx",
+    "joiner.int8.onnx",
+    "tokens.txt",
+)
+
+# NVIDIA Nemotron 3.5 ASR Streaming 0.6B supported language-locales
+# (mapped from our UI language selector codes to Nemotron's prompt_dictionary keys).
+NEMOTRON_LANG_MAP: dict[str, str] = {
+    "de": "de-DE",
+    "en": "en-US",
+    "en-us": "en-US",
+    "en-gb": "en-GB",
+    "es": "es-ES",
+    "fr": "fr-FR",
+    "it": "it-IT",
+    "pt": "pt-BR",
+    "nl": "nl-NL",
+    "pl": "pl-PL",
+    "sv": "sv-SE",
+    "tr": "tr-TR",
+    "ru": "ru-RU",
+    "hi": "hi-IN",
+    "vi": "vi-VN",
+    "uk": "uk-UA",
+    "el": "el-GR",
+    "ar": "ar-AR",
+    "ja": "ja-JP",
+    "zh": "zh-CN",
+    "ko": "ko-KR",
+}
+
+_LANG_TAG_RE = re.compile(r"\s*<[a-z]{2,3}(?:-[A-Z]{2})?>\s*$")
+
 # Short 1-word script indicators steer Whisper's BPE decoder into the target Unicode block
-# without causing prompt-continuation hallucinations on short audio clips.
+# for languages not in Nemotron 3.5's 40 locales (such as Bengali `bn`).
 WHISPER_SCRIPT_PROMPTS: dict[str, str] = {
     "bn": "বাংলা",
     "hi": "हिन्दी",
@@ -29,23 +69,62 @@ INDIC_AND_MULTIBYTE_LANGS = frozenset(
 )
 
 
+def ensure_nemotron_onnx_files(
+    nemotron_dir: Path,
+    repo_id: str = NEMOTRON_DEFAULT_REPO,
+) -> bool:
+    """Ensure the 4 INT8 ONNX artifacts for Nemotron 3.5 Streaming 0.6B are present locally."""
+    nemotron_dir.mkdir(parents=True, exist_ok=True)
+    if all((nemotron_dir / fn).exists() for fn in NEMOTRON_FILES):
+        return True
+
+    from huggingface_hub import hf_hub_download
+
+    for fn in NEMOTRON_FILES:
+        dest = nemotron_dir / fn
+        if not dest.exists():
+            logger.info("Downloading Nemotron 3.5 0.6B INT8 artifact %s from %s ...", fn, repo_id)
+            cached = hf_hub_download(repo_id=repo_id, filename=fn)
+            shutil.copyfile(cached, dest)
+    return True
+
+
 class SherpaStreamingSession(StreamingSTTSession):
     """
     True frame-synchronous causal streaming session backed by `sherpa_onnx.OnlineRecognizer`
-    (Streaming Zipformer INT8 Transducer). Decodes each 100ms chunk in ~5-12ms on CPU.
+    (NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8 Cache-Aware FastConformer-RNNT or Zipformer).
     """
 
     def __init__(
         self,
         engine: SherpaCpuEngine,
         recognizer: Any,
-        language: str = "en",
+        language: str = "de",
         sample_rate: int = 16000,
+        nemotron_lang: str | None = None,
     ) -> None:
         super().__init__(engine=engine, language=language, sample_rate=sample_rate)
         self._recognizer = recognizer
-        self._stream = self._recognizer.create_stream()
+        self._nemotron_lang = nemotron_lang
+        self._stream = self._create_configured_stream()
         self._last_partial: str = ""
+
+    def _create_configured_stream(self) -> Any:
+        stream = self._recognizer.create_stream()
+        if self._nemotron_lang:
+            try:
+                stream.set_option("language", self._nemotron_lang)
+            except Exception as exc:
+                logger.debug("Could not set stream language option %s: %s", self._nemotron_lang, exc)
+        return stream
+
+    def _clean_text(self, raw_result: Any) -> str:
+        text = (
+            raw_result
+            if isinstance(raw_result, str)
+            else getattr(raw_result, "text", str(raw_result))
+        ).strip()
+        return _LANG_TAG_RE.sub("", text).strip()
 
     async def ingest_pcm16_bytes(self, pcm16_bytes: bytes) -> list[TranscribeEvent]:
         if not pcm16_bytes or len(pcm16_bytes) < 2:
@@ -59,8 +138,7 @@ class SherpaStreamingSession(StreamingSTTSession):
         while self._recognizer.is_ready(self._stream):
             self._recognizer.decode_stream(self._stream)
 
-        raw_result = self._recognizer.get_result(self._stream)
-        text = (raw_result if isinstance(raw_result, str) else getattr(raw_result, "text", str(raw_result))).strip()
+        text = self._clean_text(self._recognizer.get_result(self._stream))
 
         events: list[TranscribeEvent] = []
         if text and text != self._last_partial:
@@ -70,7 +148,7 @@ class SherpaStreamingSession(StreamingSTTSession):
                     type="interim",
                     transcript=text,
                     language=self.language,
-                    confidence=0.95,
+                    confidence=0.96,
                 )
             )
 
@@ -81,7 +159,7 @@ class SherpaStreamingSession(StreamingSTTSession):
                         type="final",
                         transcript=text,
                         language=self.language,
-                        confidence=0.96,
+                        confidence=0.97,
                     )
                 )
             self._recognizer.reset(self._stream)
@@ -90,15 +168,14 @@ class SherpaStreamingSession(StreamingSTTSession):
         return events
 
     async def flush(self) -> TranscribeEvent | None:
-        # Feed tail padding so the transducer flushes the final word
-        tail_padding = [0.0] * int(0.45 * self.sample_rate)
+        # Feed 600ms tail padding so the 560ms cache-aware transducer window flushes the final word
+        tail_padding = [0.0] * int(0.60 * self.sample_rate)
         self._stream.accept_waveform(self.sample_rate, tail_padding)
         self._stream.input_finished()
         while self._recognizer.is_ready(self._stream):
             self._recognizer.decode_stream(self._stream)
 
-        raw_result = self._recognizer.get_result(self._stream)
-        text = (raw_result if isinstance(raw_result, str) else getattr(raw_result, "text", str(raw_result))).strip()
+        text = self._clean_text(self._recognizer.get_result(self._stream))
         self.reset()
         if not text:
             return None
@@ -106,32 +183,84 @@ class SherpaStreamingSession(StreamingSTTSession):
             type="final",
             transcript=text,
             language=self.language,
-            confidence=0.96,
+            confidence=0.97,
         )
 
     def reset(self) -> None:
         super().reset()
-        self._stream = self._recognizer.create_stream()
+        self._stream = self._create_configured_stream()
         self._last_partial = ""
 
 
 class SherpaCpuEngine(BaseSTTEngine):
     """
-    Mode A — Primary CPU Streaming Engine (`MODE_A_DEVICE=cpu`, `MODE_A_ENGINE=sherpa`):
-    Uses `Sherpa-ONNX` Streaming Zipformer INT8 Transducer for sub-15ms real-time chunk decoding.
+    Mode A — Primary Streaming & Utterance STT Engine:
+    - Default (`MODE_A_ENGINE=nemotron`): NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8
+      (`nvidia/nemotron-3.5-asr-streaming-0.6b` via `sherpa-onnx` cache-aware FastConformer-RNNT).
+    - Automatically falls back to `faster-whisper-small` INT8 for languages outside Nemotron 3.5's
+      40 locales (such as Bengali `bn`) or when `MODE_A_ENGINE=whisper`.
     """
 
     def __init__(
         self,
         sherpa_dir: Path = Path("models/sherpa-en"),
+        nemotron_dir: Path = Path("models/nemotron-3.5-0.6b-int8"),
+        nemotron_repo: str = NEMOTRON_DEFAULT_REPO,
+        engine_variant: str = "nemotron",
         fallback_whisper_model: str = "Systran/faster-whisper-small",
         cpu_threads: int = 2,
         force_whisper: bool = False,
         download_root: Path | None = None,
     ) -> None:
         self.sherpa_dir = sherpa_dir
+        self.nemotron_dir = nemotron_dir
+        self.nemotron_repo = nemotron_repo
+        self.engine_variant = engine_variant
         self.cpu_threads = cpu_threads
         self.model_id = fallback_whisper_model
+        self.download_root = download_root or Path("models/whisper")
+        self._recognizer: Any = None
+        self._is_nemotron: bool = False
+        self._whisper: Any = None
+
+        if not force_whisper and engine_variant == "nemotron":
+            try:
+                import sherpa_onnx
+
+                ensure_nemotron_onnx_files(nemotron_dir=nemotron_dir, repo_id=nemotron_repo)
+                encoder_path = nemotron_dir / "encoder.int8.onnx"
+                decoder_path = nemotron_dir / "decoder.int8.onnx"
+                joiner_path = nemotron_dir / "joiner.int8.onnx"
+                tokens_path = nemotron_dir / "tokens.txt"
+
+                logger.info(
+                    "Loading NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8 from %s (threads=%d)...",
+                    nemotron_dir,
+                    cpu_threads,
+                )
+                self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+                    tokens=str(tokens_path),
+                    encoder=str(encoder_path),
+                    decoder=str(decoder_path),
+                    joiner=str(joiner_path),
+                    num_threads=cpu_threads,
+                    sample_rate=16000,
+                    decoding_method="greedy_search",
+                    enable_endpoint_detection=True,
+                    rule1_min_trailing_silence=1.8,
+                    rule2_min_trailing_silence=0.55,
+                    rule3_min_utterance_length=15.0,
+                    provider="cpu",
+                )
+                self._is_nemotron = True
+                logger.info("NVIDIA Nemotron 3.5 ASR Streaming 0.6B INT8 ready.")
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Nemotron 3.5 0.6B initialization failed (%s); falling back to faster-whisper (%s).",
+                    exc,
+                    fallback_whisper_model,
+                )
 
         encoder_path = sherpa_dir / "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"
         decoder_path = sherpa_dir / "decoder-epoch-99-avg-1-chunk-16-left-128.onnx"
@@ -148,45 +277,47 @@ class SherpaCpuEngine(BaseSTTEngine):
             import sherpa_onnx
 
             logger.info("Loading Sherpa-ONNX Streaming Zipformer INT8 from %s ...", sherpa_dir)
-            self._recognizer: Any = (
-                sherpa_onnx.OnlineRecognizer.from_transducer(
-                    tokens=str(tokens_path),
-                    encoder=str(encoder_path),
-                    decoder=str(decoder_path),
-                    joiner=str(joiner_path),
-                    num_threads=cpu_threads,
-                    sample_rate=16000,
-                    feature_dim=80,
-                    decoding_method="greedy_search",
-                    enable_endpoint_detection=True,
-                    rule1_min_trailing_silence=2.0,
-                    rule2_min_trailing_silence=0.7,
-                    rule3_min_utterance_length=15.0,
-                )
+            self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+                tokens=str(tokens_path),
+                encoder=str(encoder_path),
+                decoder=str(decoder_path),
+                joiner=str(joiner_path),
+                num_threads=cpu_threads,
+                sample_rate=16000,
+                feature_dim=80,
+                decoding_method="greedy_search",
+                enable_endpoint_detection=True,
+                rule1_min_trailing_silence=2.0,
+                rule2_min_trailing_silence=0.7,
+                rule3_min_utterance_length=15.0,
             )
-            self._whisper = None
         else:
+            self._get_or_load_whisper()
+
+    def _get_or_load_whisper(self) -> Any:
+        if self._whisper is None:
             from faster_whisper import WhisperModel
 
-            cache_dir = download_root or Path("models/whisper")
-            cache_dir.mkdir(parents=True, exist_ok=True)
+            self.download_root.mkdir(parents=True, exist_ok=True)
             logger.info(
                 "Loading multilingual faster-whisper INT8 (%s) on CPU (threads=%d, cache=%s)...",
-                fallback_whisper_model,
-                cpu_threads,
-                cache_dir,
+                self.model_id,
+                self.cpu_threads,
+                self.download_root,
             )
-            self._recognizer = None
             self._whisper = WhisperModel(
-                fallback_whisper_model,
+                self.model_id,
                 device="cpu",
                 compute_type="int8",
-                cpu_threads=cpu_threads,
-                download_root=str(cache_dir),
+                cpu_threads=self.cpu_threads,
+                download_root=str(self.download_root),
             )
+        return self._whisper
 
     @property
     def engine_name(self) -> str:
+        if self._recognizer is not None and self._is_nemotron:
+            return "nvidia/nemotron-3.5-asr-streaming-0.6b (sherpa-onnx INT8)"
         if self._recognizer is not None:
             return "Sherpa-ONNX Streaming Zipformer INT8 (Real-Time Causal)"
         return f"faster-whisper-cpu-int8 ({self.model_id})"
@@ -195,8 +326,22 @@ class SherpaCpuEngine(BaseSTTEngine):
     def device_profile(self) -> str:
         return "cpu"
 
-    def create_session(self, language: str = "en") -> StreamingSTTSession:
+    def _supports_nemotron_lang(self, language: str) -> bool:
+        return language.lower() in NEMOTRON_LANG_MAP
+
+    def create_session(self, language: str = "de") -> StreamingSTTSession:
         if self._recognizer is not None:
+            if self._is_nemotron:
+                if self._supports_nemotron_lang(language):
+                    return SherpaStreamingSession(
+                        engine=self,
+                        recognizer=self._recognizer,
+                        language=language,
+                        sample_rate=16000,
+                        nemotron_lang=NEMOTRON_LANG_MAP[language.lower()],
+                    )
+                # Non-Nemotron language (e.g. Bengali `bn`) uses buffered Whisper session
+                return super().create_session(language=language)
             return SherpaStreamingSession(
                 engine=self,
                 recognizer=self._recognizer,
@@ -209,27 +354,37 @@ class SherpaCpuEngine(BaseSTTEngine):
         if waveform_1d.size < 800:
             return "", 0.0
 
-        if self._recognizer is not None:
+        use_transducer = self._recognizer is not None and (
+            not self._is_nemotron or self._supports_nemotron_lang(language)
+        )
+        if use_transducer:
             stream = self._recognizer.create_stream()
+            if self._is_nemotron:
+                nemotron_lang = NEMOTRON_LANG_MAP.get(language.lower(), "auto")
+                try:
+                    stream.set_option("language", nemotron_lang)
+                except Exception as exc:
+                    logger.debug("Could not set stream language option %s: %s", nemotron_lang, exc)
+
             stream.accept_waveform(16000, waveform_1d.astype(np.float32).tolist())
-            tail = [0.0] * 6400
+            # 600ms tail silence flushes the 560ms right-context chunk in Nemotron 3.5
+            tail = [0.0] * 9600
             stream.accept_waveform(16000, tail)
             stream.input_finished()
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
             raw = self._recognizer.get_result(stream)
             text = (raw if isinstance(raw, str) else getattr(raw, "text", str(raw))).strip()
-            return text, (0.95 if text else 0.0)
+            text = _LANG_TAG_RE.sub("", text).strip()
+            return text, (0.96 if text else 0.0)
 
-        if self._whisper is not None:
+        whisper = self._get_or_load_whisper()
+        if whisper is not None:
             iso_lang = STT_LANG_MAP.get(language.lower(), "de")
             is_multibyte = iso_lang in INDIC_AND_MULTIBYTE_LANGS
             use_silero_vad = waveform_1d.size >= 8000
             script_prompt = WHISPER_SCRIPT_PROMPTS.get(iso_lang)
-            # Note: 3-byte UTF-8 scripts (Bengali, Hindi, etc.) naturally have zlib compression
-            # ratios of 2.6-3.6 due to shared \xe0\xa6 UTF-8 prefix bytes, so compression_ratio_threshold
-            # must be >= 3.8 for multibyte scripts to avoid false rejection!
-            segments, _ = self._whisper.transcribe(
+            segments, _ = whisper.transcribe(
                 waveform_1d,
                 language=iso_lang,
                 initial_prompt=script_prompt,
