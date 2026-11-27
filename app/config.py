@@ -86,7 +86,7 @@ class Settings(BaseSettings):
         default=1, validation_alias="MODE_B_INTER_OP_THREADS"
     )
     mode_b_process_workers: int = Field(
-        default=2, validation_alias="MODE_B_PROCESS_WORKERS"
+        default=0, validation_alias="MODE_B_PROCESS_WORKERS"
     )
 
     # --- GOP Calibration & Conditional Diagnostics ---

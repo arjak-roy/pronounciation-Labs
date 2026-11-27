@@ -84,8 +84,11 @@ def ensure_nemotron_onnx_files(
         dest = nemotron_dir / fn
         if not dest.exists():
             logger.info("Downloading Nemotron 3.5 0.6B INT8 artifact %s from %s ...", fn, repo_id)
-            cached = hf_hub_download(repo_id=repo_id, filename=fn)
-            shutil.copyfile(cached, dest)
+            hf_hub_download(
+                repo_id=repo_id,
+                filename=fn,
+                local_dir=str(nemotron_dir),
+            )
     return True
 
 
@@ -132,7 +135,7 @@ class SherpaStreamingSession(StreamingSTTSession):
 
         usable_len = len(pcm16_bytes) - (len(pcm16_bytes) % 2)
         pcm16 = np.frombuffer(pcm16_bytes[:usable_len], dtype=np.int16)
-        samples_f32 = (pcm16.astype(np.float32) / 32768.0).tolist()
+        samples_f32 = pcm16.astype(np.float32) / 32768.0
 
         self._stream.accept_waveform(self.sample_rate, samples_f32)
         while self._recognizer.is_ready(self._stream):
@@ -168,8 +171,8 @@ class SherpaStreamingSession(StreamingSTTSession):
         return events
 
     async def flush(self) -> TranscribeEvent | None:
-        # Feed 600ms tail padding so the 560ms cache-aware transducer window flushes the final word
-        tail_padding = [0.0] * int(0.60 * self.sample_rate)
+        # Feed 560ms tail padding so the cache-aware transducer window flushes the final word
+        tail_padding = np.zeros(int(0.56 * self.sample_rate), dtype=np.float32)
         self._stream.accept_waveform(self.sample_rate, tail_padding)
         self._stream.input_finished()
         while self._recognizer.is_ready(self._stream):
@@ -366,9 +369,9 @@ class SherpaCpuEngine(BaseSTTEngine):
                 except Exception as exc:
                     logger.debug("Could not set stream language option %s: %s", nemotron_lang, exc)
 
-            stream.accept_waveform(16000, waveform_1d.astype(np.float32).tolist())
-            # 600ms tail silence flushes the 560ms right-context chunk in Nemotron 3.5
-            tail = [0.0] * 9600
+            stream.accept_waveform(16000, np.ascontiguousarray(waveform_1d, dtype=np.float32))
+            # 560ms tail silence flushes the 560ms right-context chunk in Nemotron 3.5
+            tail = np.zeros(int(0.56 * 16000), dtype=np.float32)
             stream.accept_waveform(16000, tail)
             stream.input_finished()
             while self._recognizer.is_ready(stream):

@@ -20,7 +20,7 @@ class _DummyStream:
     def set_option(self, key: str, value: str) -> None:
         self.options[key] = value
 
-    def accept_waveform(self, sample_rate: int, samples: list[float]) -> None:
+    def accept_waveform(self, sample_rate: int, samples: np.ndarray | list[float]) -> None:
         assert sample_rate == 16000
         self.accepted_samples += len(samples)
 
