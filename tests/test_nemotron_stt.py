@@ -103,3 +103,18 @@ async def test_nemotron_streaming_session_sets_option_and_flushes() -> None:
     assert final_ev is not None
     assert final_ev.type == "final"
     assert final_ev.transcript == "Hello world."
+
+
+def test_nemotron_auto_language_mode() -> None:
+    dummy_rec = _DummyNemotronRecognizer("Bonjour tout le monde. <fr-FR>")
+    engine = SherpaCpuEngine.__new__(SherpaCpuEngine)
+    engine._recognizer = dummy_rec
+    engine._is_nemotron = True
+    engine._whisper = None
+
+    text, conf = engine.transcribe_sync(np.ones(16000, dtype=np.float32) * 0.1, language="auto")
+    assert text == "Bonjour tout le monde."
+    assert conf == 0.96
+    assert dummy_rec.last_stream is not None
+    assert dummy_rec.last_stream.options.get("language") == "auto"
+

@@ -496,22 +496,17 @@ async def assess_free_speech(
 
 
 @router.websocket("/ws/transcribe")
-async def websocket_transcribe(websocket: WebSocket, lang: str = "en") -> None:
+async def websocket_transcribe(websocket: WebSocket, lang: str = "auto") -> None:
     """
     Mode A: WebSocket `/ws/transcribe?lang={code}`
-    - Client -> Server: Binary frames (`16kHz, 16-bit, mono PCM` in 100ms-200ms chunks)
+    - Supports explicit locale codes (`de`, `en`, `es`, `fr`, `hi`, etc.) AND `lang=auto`
+      (NVIDIA Nemotron 3.5 Streaming 0.6B automatic language detection, prompt_id=101).
+    - Client -> Server: Binary frames (`16kHz, 16-bit, mono PCM` in 100ms chunks)
                         or JSON control message `{"type": "flush"}` / `{"type": "reset"}`.
-    - Server -> Client: JSON `{"type": "interim"|"final", "transcript": "...", "language": "en", "confidence": 0.96}`
+    - Server -> Client: JSON `{"type": "interim"|"final", "transcript": "...", "language": "...", "confidence": 0.96}`
     """
     await websocket.accept()
-    if not lang or lang.lower() == "auto":
-        await websocket.send_json(
-            {
-                "error": "Explicit `lang` query parameter is required (never use language='auto')."
-            }
-        )
-        await websocket.close(code=1008)
-        return
+    clean_lang = (lang or "auto").strip()
 
     stt_engine: BaseSTTEngine | None = getattr(websocket.app.state, "stt_engine", None)
     if stt_engine is None:
@@ -519,7 +514,7 @@ async def websocket_transcribe(websocket: WebSocket, lang: str = "en") -> None:
         await websocket.close(code=1011)
         return
 
-    session = stt_engine.create_session(language=lang)
+    session = stt_engine.create_session(language=clean_lang)
     try:
         while True:
             msg = await websocket.receive()

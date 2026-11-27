@@ -374,7 +374,7 @@ export default function App() {
   // Filtered items for Practice Strip & Library View
   const filteredItems = useMemo(() => {
     return libraryItems.filter((item) => {
-      if (selectedLang !== 'all' && item.language !== selectedLang) return false;
+      if (selectedLang !== 'all' && selectedLang !== 'auto' && item.language !== selectedLang) return false;
       if (filterType !== 'all' && item.item_type !== filterType) return false;
       if (
         filterDifficulty !== 'all' &&
@@ -1013,7 +1013,7 @@ export default function App() {
       if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
       setRecordedAudioUrl(URL.createObjectURL(wavBlob));
 
-      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      const cleanLang = selectedLang === 'all' ? 'auto' : selectedLang;
       const fd = new FormData();
       fd.append('audio', wavBlob, filename);
       fd.append('language', cleanLang);
@@ -1251,7 +1251,7 @@ export default function App() {
       liveSttChunksRef.current = [];
 
       // Open live WebSocket stream to Nemotron 3.5 so even "Record a clip" shows live server words!
-      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      const cleanLang = selectedLang === 'all' ? 'auto' : selectedLang;
       let ws: WebSocket | null = null;
       let wsReady = false;
       let lastChunkSendTs = performance.now();
@@ -1427,7 +1427,7 @@ export default function App() {
 
     // In Hybrid mode on Record to Transcribe, also run Server Whisper in the background so you can see both!
     if (sttEngineMode === 'hybrid') {
-      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      const cleanLang = selectedLang === 'all' ? 'auto' : selectedLang;
       const fd = new FormData();
       fd.append('audio', wavBlob, 'recorded_stt_16k.wav');
       fd.append('language', cleanLang);
@@ -1597,7 +1597,7 @@ export default function App() {
       }
 
       // Pass 2: True Real-Time Binary WebSocket Streaming (/ws/transcribe) to Nemotron 3.5 0.6B (160ms INT8)
-      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      const cleanLang = selectedLang === 'all' ? 'auto' : selectedLang;
       wsFinalSegmentsRef.current = [];
       let ws: WebSocket | null = null;
       let wsReady = false;
@@ -1861,7 +1861,7 @@ export default function App() {
 
     if (andScorePronunciation) {
       const existingTranscript = [...liveSttFinalList, liveSttInterim].join(' ').trim();
-      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      const cleanLang = selectedLang === 'all' ? 'auto' : selectedLang;
       // If we already have a verified transcript from Pass 1 / Pass 2, score directly against it
       // via Mode B (/api/v1/pronunciation/assess) so Wav2Vec2 + espeak-ng scores the exact words spoken!
       if (existingTranscript) {
@@ -3358,7 +3358,7 @@ export default function App() {
                 {modeAReady ? `🟢 ${modeAProvider}` : '⚡ Getting ready'}
               </Pill>
               <select
-                value={selectedLang === 'all' ? 'de' : selectedLang}
+                value={selectedLang === 'all' ? 'auto' : selectedLang}
                 onChange={(e) => setSelectedLang(e.target.value)}
                 style={{
                   padding: '7px 11px',
@@ -3371,6 +3371,7 @@ export default function App() {
                   cursor: 'pointer',
                 }}
               >
+                <option value="auto">🌐 Auto-Detect (Nemotron 3.5)</option>
                 {LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.code} value={l.code}>
                     {l.flag} {l.label}
