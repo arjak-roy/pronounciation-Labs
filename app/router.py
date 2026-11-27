@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +35,7 @@ from app.schemas import (
 from app.stt_engines import BaseSTTEngine
 
 router = APIRouter()
+logger = logging.getLogger("voice_pronunciation_engine")
 _STATIC_HTML_PATH = Path(__file__).resolve().parent / "static" / "index.html"
 _REACT_HTML_PATH = Path(__file__).resolve().parent / "static" / "react-app" / "index.html"
 
@@ -338,7 +340,8 @@ async def _handle_pronunciation_assess(
                 item_id=parsed_item_id,
             )
         except Exception:
-            pass
+            # The learner still gets their result; the lost attempt must at least be visible.
+            logger.exception("record_attempt failed; attempt not saved")
 
     return result
 
