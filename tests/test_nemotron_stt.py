@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from app.config import Settings
+from app.stt_engines import StreamingSTTSession
 from app.stt_engines.cpu_sherpa import (
     NEMOTRON_LANG_MAP,
     SherpaCpuEngine,
@@ -50,6 +54,9 @@ class _DummyNemotronRecognizer:
     def get_result(self, stream: _DummyStream) -> str:
         return self.transcript
 
+    def ys_probs(self, stream: _DummyStream) -> list[float]:
+        return [float(np.log(0.9))] * 3
+
     def is_endpoint(self, stream: _DummyStream) -> bool:
         return False
 
@@ -74,7 +81,7 @@ def test_nemotron_transcribe_sets_language_and_strips_tag() -> None:
     text, conf = engine.transcribe_sync(waveform, language="de")
 
     assert text == "Guten Morgen, wie geht es Ihnen?"
-    assert conf == 0.96
+    assert conf == 0.9
     assert engine._recognizer.last_stream is not None
     assert engine._recognizer.last_stream.options.get("language") == "de-DE"
     assert engine._recognizer.last_stream.finished is True
@@ -114,7 +121,29 @@ def test_nemotron_auto_language_mode() -> None:
 
     text, conf = engine.transcribe_sync(np.ones(16000, dtype=np.float32) * 0.1, language="auto")
     assert text == "Bonjour tout le monde."
-    assert conf == 0.96
+    assert conf == 0.9
     assert dummy_rec.last_stream is not None
     assert dummy_rec.last_stream.options.get("language") == "auto"
 
+
+
+def test_zipformer_fallback_is_english_only() -> None:
+    engine = SherpaCpuEngine.__new__(SherpaCpuEngine)
+    engine._recognizer = _DummyNemotronRecognizer("hello")
+    engine._is_nemotron = False
+    engine._whisper = None
+
+    assert isinstance(engine.create_session(language="en"), SherpaStreamingSession)
+    de_session = engine.create_session(language="de")
+    assert not isinstance(de_session, SherpaStreamingSession)
+    assert isinstance(de_session, StreamingSTTSession)
+
+
+def test_cpu_threads_capped_by_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.stt_engines.cpu_sherpa as mod
+
+    monkeypatch.setattr(mod.SherpaCpuEngine, "_get_or_load_whisper", lambda self: None)
+    engine = mod.SherpaCpuEngine(
+        engine_variant="none", cpu_threads=2, sherpa_dir=Path("does-not-exist")
+    )
+    assert engine.cpu_threads == min(2, os.cpu_count() or 2)

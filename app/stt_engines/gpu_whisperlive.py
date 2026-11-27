@@ -59,7 +59,7 @@ class WhisperLiveGpuEngine(BaseSTTEngine):
         if waveform_1d.size < 1600:
             return "", 0.0
 
-        iso_lang = STT_LANG_MAP.get(language.lower(), "en")
+        iso_lang = None if language.lower() == "auto" else STT_LANG_MAP.get(language.lower(), "en")
         segments, _ = self._whisper.transcribe(
             waveform_1d,
             language=iso_lang,
