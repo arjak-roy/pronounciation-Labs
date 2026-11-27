@@ -28,11 +28,11 @@ class Settings(BaseSettings):
         default="nemotron", validation_alias="MODE_A_ENGINE"
     )
     mode_a_nemotron_repo: str = Field(
-        default="csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11",
+        default="csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
         validation_alias="MODE_A_NEMOTRON_REPO",
     )
     mode_a_nemotron_dir: Path = Field(
-        default=Path("models/nemotron-3.5-0.6b-160ms-int8"),
+        default=Path("models/nemotron-3.5-0.6b-int8"),
         validation_alias="MODE_A_NEMOTRON_DIR",
     )
     mode_a_sherpa_dir: Path = Field(

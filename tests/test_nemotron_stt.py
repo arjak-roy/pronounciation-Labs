@@ -69,7 +69,7 @@ def test_nemotron_transcribe_sets_language_and_strips_tag() -> None:
     engine._is_nemotron = True
     engine._whisper = None
 
-    assert engine.engine_name == "nvidia/nemotron-3.5-asr-streaming-0.6b (160ms sherpa-onnx INT8)"
+    assert engine.engine_name == "nvidia/nemotron-3.5-asr-streaming-0.6b (560ms sherpa-onnx INT8)"
     waveform = np.ones(16000, dtype=np.float32) * 0.1
     text, conf = engine.transcribe_sync(waveform, language="de")
 

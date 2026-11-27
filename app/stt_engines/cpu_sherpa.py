@@ -16,7 +16,7 @@ from app.stt_engines import STT_LANG_MAP, BaseSTTEngine, StreamingSTTSession
 logger = logging.getLogger("voice_pronunciation_engine.mode_a_sherpa")
 
 NEMOTRON_DEFAULT_REPO = (
-    "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11"
+    "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
 )
 NEMOTRON_FILES = (
     "encoder.int8.onnx",
@@ -152,8 +152,8 @@ class SherpaStreamingSession(StreamingSTTSession):
         return text, is_ep
 
     def _flush_sync(self) -> str:
-        # 200ms tail padding flushes the 160ms cache-aware transducer window immediately
-        tail_padding = np.zeros(int(0.20 * self.sample_rate), dtype=np.float32)
+        # 480ms tail padding flushes the 560ms cache-aware transducer window immediately
+        tail_padding = np.zeros(int(0.48 * self.sample_rate), dtype=np.float32)
         self._stream.accept_waveform(self.sample_rate, tail_padding)
         self._stream.input_finished()
         while self._recognizer.is_ready(self._stream):
@@ -229,7 +229,7 @@ class SherpaCpuEngine(BaseSTTEngine):
     def __init__(
         self,
         sherpa_dir: Path = Path("models/sherpa-en"),
-        nemotron_dir: Path = Path("models/nemotron-3.5-0.6b-160ms-int8"),
+        nemotron_dir: Path = Path("models/nemotron-3.5-0.6b-int8"),
         nemotron_repo: str = NEMOTRON_DEFAULT_REPO,
         engine_variant: str = "nemotron",
         fallback_whisper_model: str = "Systran/faster-whisper-small",
@@ -342,7 +342,7 @@ class SherpaCpuEngine(BaseSTTEngine):
     @property
     def engine_name(self) -> str:
         if self._recognizer is not None and self._is_nemotron:
-            return "nvidia/nemotron-3.5-asr-streaming-0.6b (160ms sherpa-onnx INT8)"
+            return "nvidia/nemotron-3.5-asr-streaming-0.6b (560ms sherpa-onnx INT8)"
         if self._recognizer is not None:
             return "Sherpa-ONNX Streaming Zipformer INT8 (Real-Time Causal)"
         return f"faster-whisper-cpu-int8 ({self.model_id})"
@@ -392,8 +392,8 @@ class SherpaCpuEngine(BaseSTTEngine):
                     logger.debug("Could not set stream language option %s: %s", nemotron_lang, exc)
 
             stream.accept_waveform(16000, np.ascontiguousarray(waveform_1d, dtype=np.float32))
-            # 200ms tail silence flushes the 160ms right-context chunk in Nemotron 3.5
-            tail = np.zeros(int(0.20 * 16000), dtype=np.float32)
+            # 480ms tail silence flushes the 560ms right-context chunk in Nemotron 3.5
+            tail = np.zeros(int(0.48 * 16000), dtype=np.float32)
             stream.accept_waveform(16000, tail)
             stream.input_finished()
             while self._recognizer.is_ready(stream):

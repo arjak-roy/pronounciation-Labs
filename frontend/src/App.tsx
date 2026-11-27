@@ -1241,15 +1241,79 @@ export default function App() {
     try {
       setErrorMsg(null);
       pass1InterimRef.current = '';
+      wsFinalSegmentsRef.current = [];
       setLiveSttInterim('');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       });
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const inRate = ctx.sampleRate;
       liveSttChunksRef.current = [];
+
+      // Open live WebSocket stream to Nemotron 3.5 so even "Record a clip" shows live server words!
+      const cleanLang = selectedLang === 'all' ? 'de' : selectedLang;
+      let ws: WebSocket | null = null;
+      let wsReady = false;
+      let lastChunkSendTs = performance.now();
+
+      if (sttEngineMode !== 'browser_only') {
+        try {
+          const base = apiBase || window.location.origin;
+          const wsProtocol = base.startsWith('https') ? 'wss:' : 'ws:';
+          const wsHost = base.replace(/^https?:\/\//, '');
+          const wsUrl = `${wsProtocol}//${wsHost}/ws/transcribe?lang=${encodeURIComponent(cleanLang)}`;
+          ws = new WebSocket(wsUrl);
+          ws.binaryType = 'arraybuffer';
+          liveWsRef.current = ws;
+
+          ws.onopen = () => {
+            wsReady = true;
+          };
+          ws.onmessage = (msgEv) => {
+            try {
+              const data = JSON.parse(msgEv.data);
+              const t = (data.transcript || '').trim();
+              if (!t) return;
+              const rtt = Math.max(18, Math.round(performance.now() - lastChunkSendTs));
+              setLatencyMs(rtt);
+              if (typeof data.confidence === 'number') {
+                setLiveSttConfidence(data.confidence);
+              }
+              if (data.type === 'interim') {
+                const fullServerPreview = [...wsFinalSegmentsRef.current, t].join(' ').trim();
+                setLastWhisperText(fullServerPreview);
+                setLiveSttInterim(t);
+                setLastSttSource(`🧠 Live from our server · ${rtt}ms`);
+              } else if (data.type === 'final') {
+                const curWs = wsFinalSegmentsRef.current;
+                if (curWs.length === 0 || curWs[curWs.length - 1] !== t) {
+                  wsFinalSegmentsRef.current = [...curWs, t];
+                }
+                const fullServerText = wsFinalSegmentsRef.current.join(' ').trim();
+                setLastWhisperText(fullServerText);
+                pass1CommittedRef.current = [...wsFinalSegmentsRef.current];
+                pass1InterimRef.current = '';
+                setLiveSttFinalList([...pass1CommittedRef.current]);
+                setLiveSttInterim('');
+                setLastSttSource(`🧠 Live from our server · ${rtt}ms`);
+              }
+            } catch {}
+          };
+          ws.onerror = () => {
+            wsReady = false;
+          };
+          ws.onclose = () => {
+            wsReady = false;
+          };
+        } catch {
+          ws = null;
+        }
+      }
 
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(2048, 1, 1);
+      let pcm16SendAccumulator: Float32Array[] = [];
+      let pcm16SendSamples = 0;
 
       processor.onaudioprocess = (e) => {
         if (!isSttClipRef.current) return;
@@ -1260,6 +1324,24 @@ export default function App() {
         for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
         const rms = Math.sqrt(sum / ch.length);
         setLiveMicLevel(Math.min(100, Math.round(rms * 420)));
+
+        if (ws && wsReady && ws.readyState === WebSocket.OPEN) {
+          const ds16k = downsampleBuffer(ch, inRate, 16000);
+          pcm16SendAccumulator.push(ds16k);
+          pcm16SendSamples += ds16k.length;
+          if (pcm16SendSamples >= 1600) {
+            const floatSamples = mergeBuffers(pcm16SendAccumulator);
+            pcm16SendAccumulator = [];
+            pcm16SendSamples = 0;
+            const pcm16 = new Int16Array(floatSamples.length);
+            for (let i = 0; i < floatSamples.length; i++) {
+              const s = Math.max(-1, Math.min(1, floatSamples[i]));
+              pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            lastChunkSendTs = performance.now();
+            ws.send(pcm16.buffer);
+          }
+        }
       };
 
       source.connect(processor);
@@ -1287,6 +1369,17 @@ export default function App() {
     setLiveMicLevel(0);
     triggerTone(440, 0.07);
     await stopBrowserPass1Recognizer();
+    if (liveWsRef.current) {
+      const ws = liveWsRef.current;
+      liveWsRef.current = null;
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'flush' }));
+          await new Promise((r) => window.setTimeout(r, 220));
+          ws.close();
+        } catch {}
+      }
+    }
 
     const inRate = audioCtxRef.current?.sampleRate || 48000;
     if (processorRef.current) processorRef.current.disconnect();
@@ -1310,6 +1403,15 @@ export default function App() {
     setRecordedAudioUrl(URL.createObjectURL(wavBlob));
 
     if (sttEngineMode === 'whisper_only') {
+      const wsCaptured = wsFinalSegmentsRef.current.join(' ').trim();
+      if (wsCaptured && !alsoScorePronunciation) {
+        return;
+      }
+      if (wsCaptured && alsoScorePronunciation) {
+        setReferenceText(wsCaptured);
+        await submitAudioForAssessment(wavBlob, 'recorded_stt_16k.wav');
+        return;
+      }
       await transcribeOrScoreWavBlob(wavBlob, 'recorded_stt_16k.wav', alsoScorePronunciation);
       return;
     }
@@ -1528,9 +1630,7 @@ export default function App() {
               if (data.type === 'interim') {
                 const fullServerPreview = [...wsFinalSegmentsRef.current, t].join(' ').trim();
                 setLastWhisperText(fullServerPreview);
-                if (sttEngineMode === 'whisper_only' || !pass1InterimRef.current) {
-                  setLiveSttInterim(t);
-                }
+                setLiveSttInterim(t);
                 setLastSttSource(`🧠 Live from our server · ${rtt}ms`);
               } else if (data.type === 'final') {
                 const curWs = wsFinalSegmentsRef.current;
@@ -1642,6 +1742,19 @@ export default function App() {
 
         const ds16k = downsampleBuffer(ch, inRate, 16000);
 
+        // Always stream continuous 100ms PCM16 packets (1600 samples @ 16kHz) over WebSocket
+        // when connected: Nemotron 3.5's cache-aware FastConformer-RNNT requires a continuous
+        // waveform stream to advance its 560ms window and run built-in endpointing in real time!
+        if (ws && wsReady && ws.readyState === WebSocket.OPEN) {
+          pcm16SendAccumulator.push(ds16k);
+          pcm16SendSamples += ds16k.length;
+          if (pcm16SendSamples >= 1600) {
+            sendPcm16OverWebSocket(mergeBuffers(pcm16SendAccumulator));
+            pcm16SendAccumulator = [];
+            pcm16SendSamples = 0;
+          }
+        }
+
         if (isSpeechFrame) {
           setVadVoiceActive(true);
           if (!speechActive && preRollRing.length > 0) {
@@ -1650,51 +1763,29 @@ export default function App() {
             liveSttChunksRef.current.push(preRoll);
             currentUtteranceChunks.push(preRoll);
             currentUtteranceSamples += preRoll.length;
-            pcm16SendAccumulator.push(preRoll);
-            pcm16SendSamples += preRoll.length;
           }
           speechActive = true;
           silenceSamplesSinceSpeech = 0;
           liveSttChunksRef.current.push(ds16k);
           currentUtteranceChunks.push(ds16k);
           currentUtteranceSamples += ds16k.length;
-          pcm16SendAccumulator.push(ds16k);
-          pcm16SendSamples += ds16k.length;
-
-          // Stream 80ms binary PCM16 packets (~1280 samples @ 16kHz) immediately over WebSocket
-          if (pcm16SendSamples >= 1280) {
-            sendPcm16OverWebSocket(mergeBuffers(pcm16SendAccumulator));
-            pcm16SendAccumulator = [];
-            pcm16SendSamples = 0;
-          }
-
-          // If user speaks continuously for >8s without pausing, checkpoint segment
-          if (currentUtteranceSamples >= 128000) {
-            flushUtteranceToPass2();
-          }
         } else if (speechActive) {
           silenceSamplesSinceSpeech += ds16k.length;
           liveSttChunksRef.current.push(ds16k);
           currentUtteranceChunks.push(ds16k);
           currentUtteranceSamples += ds16k.length;
-          pcm16SendAccumulator.push(ds16k);
-          pcm16SendSamples += ds16k.length;
 
-          if (pcm16SendSamples >= 1280) {
-            sendPcm16OverWebSocket(mergeBuffers(pcm16SendAccumulator));
-            pcm16SendAccumulator = [];
-            pcm16SendSamples = 0;
-          }
-
-          // After ~380ms of silence (6080 samples @ 16kHz), flush the streaming transducer!
-          if (silenceSamplesSinceSpeech >= 6080) {
+          // After ~500ms of silence (8000 samples @ 16kHz), mark VAD idle (and if WebSocket isn't active, flush to HTTP)
+          if (silenceSamplesSinceSpeech >= 8000) {
             speechActive = false;
             silenceSamplesSinceSpeech = 0;
             setVadVoiceActive(false);
-            flushUtteranceToPass2();
+            if (!ws || !wsReady || ws.readyState !== WebSocket.OPEN) {
+              flushUtteranceToPass2();
+            }
           }
         } else {
-          // Pure silence: maintain 160ms pre-roll ring buffer and drop silent frames
+          // Pure silence: maintain 160ms pre-roll ring buffer for local recording
           setVadVoiceActive(false);
           preRollRing.push(ds16k);
           if (preRollRing.length > 5) preRollRing.shift();
